@@ -58,63 +58,48 @@ logger = logging.getLogger(__name__)
 
 
 # =========================================================
-# VOICE LIST
+# RENDER HEALTH SERVER
 # =========================================================
 
-VOICES = {
+class HealthHandler(BaseHTTPRequestHandler):
 
-    # =====================================================
-    # BANGLA
-    # =====================================================
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header(
+            "Content-Type",
+            "text/plain; charset=utf-8"
+        )
+        self.end_headers()
 
-    "bn": {
-        "🇧🇩 বাংলা পুরুষ": "bn-BD-PradeepNeural",
-        "🇧🇩 বাংলা মহিলা": "bn-BD-NabanitaNeural",
-    },
+        self.wfile.write(
+            b"VoiceGen BD Bot is running!"
+        )
 
-    # =====================================================
-    # ENGLISH
-    # =====================================================
+    def log_message(self, format, *args):
+        return
 
-    "en": {
-        "🇺🇸 Male - Guy": "en-US-GuyNeural",
-        "🇺🇸 Male - Christopher": "en-US-ChristopherNeural",
-        "🇺🇸 Male - Eric": "en-US-EricNeural",
-        "🇺🇸 Male - Roger": "en-US-RogerNeural",
 
-        "🇺🇸 Female - Jenny": "en-US-JennyNeural",
-        "🇺🇸 Female - Aria": "en-US-AriaNeural",
-        "🇺🇸 Female - Michelle": "en-US-MichelleNeural",
-        "🇺🇸 Female - Ana": "en-US-AnaNeural",
-    },
+def start_health_server():
 
-    # =====================================================
-    # HINDI
-    # =====================================================
+    try:
 
-    "hi": {
-        "🇮🇳 हिन्दी Male - Madhur": "hi-IN-MadhurNeural",
-        "🇮🇳 हिन्दी Female - Swara": "hi-IN-SwaraNeural",
-    },
+        server = HTTPServer(
+            ("0.0.0.0", PORT),
+            HealthHandler
+        )
 
-    # =====================================================
-    # URDU
-    # =====================================================
+        logger.info(
+            "Health server running on port %s",
+            PORT
+        )
 
-    "ur": {
-        "🇵🇰 اردو Male - Asad": "ur-PK-AsadNeural",
-        "🇵🇰 اردو Female - Uzma": "ur-PK-UzmaNeural",
-    },
+        server.serve_forever()
 
-    # =====================================================
-    # ARABIC
-    # =====================================================
+    except Exception:
 
-    "ar": {
-        "🇸🇦 العربية Male - Hamed": "ar-SA-HamedNeural",
-        "🇸🇦 العربية Female - Zariyah": "ar-SA-ZariyahNeural",
-    },
-}
+        logger.exception(
+            "Health server error"
+        )
 
 
 # =========================================================
@@ -149,20 +134,12 @@ def save_user(user):
 
     cursor.execute("""
         INSERT OR IGNORE INTO users
-        (
-            user_id,
-            username,
-            first_name,
-            selected_language,
-            selected_voice
-        )
-        VALUES (?, ?, ?, ?, ?)
+        (user_id, username, first_name)
+        VALUES (?, ?, ?)
     """, (
         user.id,
         user.username,
-        user.first_name,
-        "bn",
-        "bn-BD-PradeepNeural"
+        user.first_name
     ))
 
     cursor.execute("""
@@ -208,23 +185,12 @@ def set_language(user_id, language):
 
     cursor = conn.cursor()
 
-    voices = VOICES.get(
-        language,
-        VOICES["bn"]
-    )
-
-    default_voice = list(
-        voices.values()
-    )[0]
-
     cursor.execute("""
         UPDATE users
-        SET selected_language = ?,
-            selected_voice = ?
+        SET selected_language = ?
         WHERE user_id = ?
     """, (
         language,
-        default_voice,
         user_id
     ))
 
@@ -249,53 +215,6 @@ def set_voice(user_id, voice):
 
     conn.commit()
     conn.close()
-
-
-# =========================================================
-# RENDER HEALTH SERVER
-# =========================================================
-
-class HealthHandler(BaseHTTPRequestHandler):
-
-    def do_GET(self):
-
-        self.send_response(200)
-
-        self.send_header(
-            "Content-Type",
-            "text/plain; charset=utf-8"
-        )
-
-        self.end_headers()
-
-        self.wfile.write(
-            b"VoiceGen BD Bot is running!"
-        )
-
-    def log_message(self, format, *args):
-        return
-
-
-def start_health_server():
-
-    try:
-
-        server = HTTPServer(
-            ("0.0.0.0", PORT),
-            HealthHandler
-        )
-
-        print(
-            f"Health server running on port {PORT}"
-        )
-
-        server.serve_forever()
-
-    except Exception:
-
-        logger.exception(
-            "Health server error"
-        )
 
 
 # =========================================================
@@ -341,26 +260,201 @@ def language_keyboard():
 
 
 # =========================================================
-# VOICE KEYBOARD
+# VOICE LIST
+# =========================================================
+
+VOICE_LIST = {
+
+    # -------------------------
+    # BANGLA
+    # -------------------------
+
+    "bn": {
+
+        "male": [
+            (
+                "🇧🇩 বাংলা পুরুষ 1",
+                "bn-BD-PradeepNeural"
+            ),
+        ],
+
+        "female": [
+            (
+                "🇧🇩 বাংলা মহিলা 1",
+                "bn-BD-NabanitaNeural"
+            ),
+        ],
+    },
+
+
+    # -------------------------
+    # ENGLISH
+    # -------------------------
+
+    "en": {
+
+        "male": [
+            (
+                "🇺🇸 English Male - Guy",
+                "en-US-GuyNeural"
+            ),
+            (
+                "🇺🇸 English Male - Christopher",
+                "en-US-ChristopherNeural"
+            ),
+            (
+                "🇺🇸 English Male - Eric",
+                "en-US-EricNeural"
+            ),
+            (
+                "🇬🇧 English Male - Ryan",
+                "en-GB-RyanNeural"
+            ),
+        ],
+
+        "female": [
+            (
+                "🇺🇸 English Female - Jenny",
+                "en-US-JennyNeural"
+            ),
+            (
+                "🇺🇸 English Female - Aria",
+                "en-US-AriaNeural"
+            ),
+            (
+                "🇺🇸 English Female - Michelle",
+                "en-US-MichelleNeural"
+            ),
+            (
+                "🇬🇧 English Female - Sonia",
+                "en-GB-SoniaNeural"
+            ),
+        ],
+    },
+
+
+    # -------------------------
+    # HINDI
+    # -------------------------
+
+    "hi": {
+
+        "male": [
+            (
+                "🇮🇳 Hindi Male - Madhur",
+                "hi-IN-MadhurNeural"
+            ),
+        ],
+
+        "female": [
+            (
+                "🇮🇳 Hindi Female - Swara",
+                "hi-IN-SwaraNeural"
+            ),
+        ],
+    },
+
+
+    # -------------------------
+    # URDU
+    # -------------------------
+
+    "ur": {
+
+        "male": [
+            (
+                "🇵🇰 Urdu Male - Asad",
+                "ur-PK-AsadNeural"
+            ),
+        ],
+
+        "female": [
+            (
+                "🇵🇰 Urdu Female - Uzma",
+                "ur-PK-UzmaNeural"
+            ),
+        ],
+    },
+
+
+    # -------------------------
+    # ARABIC
+    # -------------------------
+
+    "ar": {
+
+        "male": [
+            (
+                "🇸🇦 Arabic Male - Hamed",
+                "ar-SA-HamedNeural"
+            ),
+        ],
+
+        "female": [
+            (
+                "🇸🇦 Arabic Female - Zariyah",
+                "ar-SA-ZariyahNeural"
+            ),
+        ],
+    },
+
+}
+
+
+# =========================================================
+# VOICE MENU
 # =========================================================
 
 def voice_keyboard(language):
 
-    voices = VOICES.get(
+    voices = VOICE_LIST.get(
         language,
-        VOICES["bn"]
+        VOICE_LIST["bn"]
     )
 
     keyboard = []
 
-    for name, voice_id in voices.items():
+    keyboard.append([
+        InlineKeyboardButton(
+            "👨 পুরুষের Voice",
+            callback_data="voice_menu_male"
+        ),
+        InlineKeyboardButton(
+            "👩 মহিলার Voice",
+            callback_data="voice_menu_female"
+        ),
+    ])
+
+    return InlineKeyboardMarkup(keyboard)
+
+
+def gender_voice_keyboard(language, gender):
+
+    voices = VOICE_LIST.get(
+        language,
+        VOICE_LIST["bn"]
+    ).get(
+        gender,
+        []
+    )
+
+    keyboard = []
+
+    for name, voice_id in voices:
 
         keyboard.append([
             InlineKeyboardButton(
                 name,
-                callback_data=f"voice:{voice_id}"
+                callback_data=f"selectvoice_{voice_id}"
             )
         ])
+
+    keyboard.append([
+        InlineKeyboardButton(
+            "⬅️ Back",
+            callback_data="voice_back"
+        )
+    ])
 
     return InlineKeyboardMarkup(keyboard)
 
@@ -386,7 +480,7 @@ async def start(
         text = (
             "🎙️ <b>Welcome to VoiceGen BD!</b>\n\n"
             "আপনি এখানে Text থেকে Voice/MP3 তৈরি করতে পারবেন।\n\n"
-            "🌐 <b>Language নির্বাচন করুন:</b>"
+            "🌐 <b>প্রথমে Language নির্বাচন করুন:</b>"
         )
 
         await update.message.reply_text(
@@ -416,10 +510,12 @@ async def language_command(
     context: ContextTypes.DEFAULT_TYPE
 ):
 
-    await update.message.reply_text(
-        "🌐 Select your language:",
-        reply_markup=language_keyboard()
-    )
+    if update.message:
+
+        await update.message.reply_text(
+            "🌐 Language নির্বাচন করুন:",
+            reply_markup=language_keyboard()
+        )
 
 
 # =========================================================
@@ -433,18 +529,15 @@ async def voice_command(
 
     user = update.effective_user
 
-    if not user:
+    if not user or not update.message:
         return
-
-    save_user(user)
 
     language, voice = get_settings(
         user.id
     )
 
     await update.message.reply_text(
-        "🎤 <b>Voice নির্বাচন করুন:</b>",
-        parse_mode="HTML",
+        "🎤 Voice নির্বাচন করুন:",
         reply_markup=voice_keyboard(language)
     )
 
@@ -458,10 +551,12 @@ async def change_language(
     context: ContextTypes.DEFAULT_TYPE
 ):
 
-    await update.message.reply_text(
-        "🌐 Choose a language:",
-        reply_markup=language_keyboard()
-    )
+    if update.message:
+
+        await update.message.reply_text(
+            "🌐 Language নির্বাচন করুন:",
+            reply_markup=language_keyboard()
+        )
 
 
 # =========================================================
@@ -492,13 +587,9 @@ async def language_selection(
     language_names = {
 
         "bn": "🇧🇩 বাংলা",
-
         "en": "🇬🇧 English",
-
         "hi": "🇮🇳 हिन्दी",
-
         "ur": "🇵🇰 اردو",
-
         "ar": "🇸🇦 العربية",
 
     }
@@ -509,15 +600,10 @@ async def language_selection(
     )
 
     await query.edit_message_text(
-
-        f"✅ Language selected: "
-        f"<b>{selected_name}</b>\n\n"
-        "🎤 <b>এখন Voice নির্বাচন করুন:</b>",
-
+        f"✅ Language selected: <b>{selected_name}</b>\n\n"
+        "🎤 এখন Voice নির্বাচন করুন:",
         parse_mode="HTML",
-
         reply_markup=voice_keyboard(language)
-
     )
 
     logger.info(
@@ -528,10 +614,87 @@ async def language_selection(
 
 
 # =========================================================
-# VOICE SELECTION
+# VOICE MENU - MALE
 # =========================================================
 
-async def voice_selection(
+async def male_voice_menu(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    query = update.callback_query
+
+    await query.answer()
+
+    language, voice = get_settings(
+        query.from_user.id
+    )
+
+    await query.edit_message_text(
+        "👨 <b>পুরুষের Voice নির্বাচন করুন:</b>",
+        parse_mode="HTML",
+        reply_markup=gender_voice_keyboard(
+            language,
+            "male"
+        )
+    )
+
+
+# =========================================================
+# VOICE MENU - FEMALE
+# =========================================================
+
+async def female_voice_menu(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    query = update.callback_query
+
+    await query.answer()
+
+    language, voice = get_settings(
+        query.from_user.id
+    )
+
+    await query.edit_message_text(
+        "👩 <b>মহিলার Voice নির্বাচন করুন:</b>",
+        parse_mode="HTML",
+        reply_markup=gender_voice_keyboard(
+            language,
+            "female"
+        )
+    )
+
+
+# =========================================================
+# VOICE BACK
+# =========================================================
+
+async def voice_back(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    query = update.callback_query
+
+    await query.answer()
+
+    language, voice = get_settings(
+        query.from_user.id
+    )
+
+    await query.edit_message_text(
+        "🎤 Voice নির্বাচন করুন:",
+        reply_markup=voice_keyboard(language)
+    )
+
+
+# =========================================================
+# SELECT VOICE
+# =========================================================
+
+async def select_voice(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
@@ -542,29 +705,26 @@ async def voice_selection(
 
     user_id = query.from_user.id
 
-    voice_id = query.data.replace(
-        "voice:",
+    voice = query.data.replace(
+        "selectvoice_",
         ""
     )
 
     set_voice(
         user_id,
-        voice_id
+        voice
     )
 
     await query.edit_message_text(
-
         "✅ <b>Voice selected!</b>\n\n"
-        "📝 এখন আপনার Text পাঠান।\n\n"
-        "🎙️ আমি সেটিকে MP3 Voice-এ তৈরি করে দেব।",
-
+        "এখন আপনার Text পাঠান।\n"
+        "আমি সেটিকে ধীরে Voice/MP3 করে দেব।",
         parse_mode="HTML"
-
     )
 
     logger.info(
         "Voice %s selected by user %s",
-        voice_id,
+        voice,
         user_id
     )
 
@@ -617,27 +777,27 @@ async def text_to_voice(
 
     await update.message.reply_text(
         "⏳ <b>Voice তৈরি হচ্ছে...</b>\n\n"
+        "🐢 Speed: <b>30% Slow</b>\n"
         "একটু অপেক্ষা করুন।",
         parse_mode="HTML"
     )
 
-    message_id = update.message.message_id
-
     output_file = (
         DOWNLOAD_DIR /
-        f"{user.id}_{message_id}.mp3"
+        f"{user.id}_{update.message.message_id}.mp3"
     )
 
     try:
 
         logger.info(
-            "Creating TTS for user %s, voice=%s",
+            "Creating TTS: user=%s voice=%s rate=-30%%",
             user.id,
             voice
         )
 
         # =================================================
-        # SPEED = -30%
+        # EDGE TTS
+        # 30% SLOW
         # =================================================
 
         communicate = edge_tts.Communicate(
@@ -655,9 +815,24 @@ async def text_to_voice(
             output_file
         )
 
+        if not output_file.exists():
+
+            raise FileNotFoundError(
+                "MP3 file তৈরি হয়নি।"
+            )
+
         # =================================================
         # SEND MP3
         # =================================================
+
+        keyboard = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton(
+                    "⬇️ Download MP3",
+                    callback_data=f"download_{output_file.name}"
+                )
+            ]
+        ])
 
         with open(
             output_file,
@@ -665,31 +840,14 @@ async def text_to_voice(
         ) as audio_file:
 
             await update.message.reply_audio(
-
                 audio=audio_file,
-
                 title="VoiceGen BD",
-
                 performer="VoiceGen BD Bot",
-
                 caption=(
-                    "🎙️ Voice তৈরি হয়েছে!\n\n"
-                    "⬇️ Download MP3 চাপুন।"
+                    "🎙️ Voice তৈরি হয়েছে!\n"
+                    "🐢 Speed: 30% Slow"
                 ),
-
-                reply_markup=InlineKeyboardMarkup([
-                    [
-                        InlineKeyboardButton(
-                            "⬇️ Download MP3",
-                            callback_data=(
-                                f"download:"
-                                f"{user.id}:"
-                                f"{message_id}"
-                            )
-                        )
-                    ]
-                ])
-
+                reply_markup=keyboard
             )
 
         logger.info(
@@ -704,23 +862,26 @@ async def text_to_voice(
         )
 
         await update.message.reply_text(
-
-            "❌ <b>Voice তৈরি করা যায়নি।</b>\n\n"
-            "দয়া করে আবার চেষ্টা করুন।\n\n"
-            f"Error: {str(e)[:500]}",
-
-            parse_mode="HTML"
+            "❌ Voice তৈরি করা যায়নি।\n\n"
+            f"Error: {str(e)[:500]}"
         )
 
     finally:
 
-        # MP3 সাথে সাথে delete করছি না,
-        # যাতে Download button কাজ করতে পারে।
-        pass
+        if output_file.exists():
+
+            try:
+                output_file.unlink()
+
+            except Exception:
+
+                logger.exception(
+                    "Could not delete temporary MP3"
+                )
 
 
 # =========================================================
-# DOWNLOAD MP3
+# DOWNLOAD BUTTON
 # =========================================================
 
 async def download_mp3(
@@ -731,30 +892,229 @@ async def download_mp3(
     query = update.callback_query
 
     await query.answer(
-        "⏳ MP3 প্রস্তুত হচ্ছে..."
+        "MP3 প্রস্তুত করা হচ্ছে..."
     )
+
+    filename = query.data.replace(
+        "download_",
+        ""
+    )
+
+    file_path = DOWNLOAD_DIR / filename
+
+    # Security check
+    if file_path.parent != DOWNLOAD_DIR:
+
+        await query.message.reply_text(
+            "❌ Invalid file."
+        )
+
+        return
+
+    if not file_path.exists():
+
+        await query.message.reply_text(
+            "❌ এই MP3 file আর available নেই।\n"
+            "নতুন করে Text পাঠিয়ে Voice তৈরি করুন।"
+        )
+
+        return
 
     try:
 
-        parts = query.data.split(":")
+        with open(
+            file_path,
+            "rb"
+        ) as audio_file:
 
-        if len(parts) != 3:
-            return
-
-        user_id = int(parts[1])
-        message_id = int(parts[2])
-
-        # =================================================
-        # SECURITY CHECK
-        # =================================================
-
-        if query.from_user.id != user_id:
-
-            await query.answer(
-                "❌ এই ফাইল আপনার জন্য নয়।",
-                show_alert=True
+            await query.message.reply_document(
+                document=audio_file,
+                filename=filename,
+                caption="⬇️ আপনার MP3 Download করুন।"
             )
 
-            return
+    except Exception:
 
-        file_path = (
+        logger.exception(
+            "Download error"
+        )
+
+        await query.message.reply_text(
+            "❌ MP3 পাঠানো যায়নি।"
+        )
+
+
+# =========================================================
+# ERROR HANDLER
+# =========================================================
+
+async def error_handler(
+    update: object,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    logger.error(
+        "Exception while handling update:",
+        exc_info=context.error
+    )
+
+
+# =========================================================
+# MAIN
+# =========================================================
+
+def main():
+
+    print("====================================")
+    print("          VoiceGen BD Bot")
+    print("====================================")
+    print(f"Render PORT: {PORT}")
+    print("Starting health server...")
+
+    # Database
+    init_db()
+
+    # Health server
+    health_thread = threading.Thread(
+        target=start_health_server,
+        daemon=True
+    )
+
+    health_thread.start()
+
+    print("Health server started.")
+
+    # Telegram Application
+    app = (
+        Application
+        .builder()
+        .token(BOT_TOKEN)
+        .build()
+    )
+
+    # =====================================================
+    # COMMANDS
+    # =====================================================
+
+    app.add_handler(
+        CommandHandler(
+            "start",
+            start
+        )
+    )
+
+    app.add_handler(
+        CommandHandler(
+            "language",
+            language_command
+        )
+    )
+
+    app.add_handler(
+        CommandHandler(
+            "voice",
+            voice_command
+        )
+    )
+
+    app.add_handler(
+        CommandHandler(
+            "changelanguage",
+            change_language
+        )
+    )
+
+    # =====================================================
+    # LANGUAGE
+    # =====================================================
+
+    app.add_handler(
+        CallbackQueryHandler(
+            language_selection,
+            pattern=r"^lang_"
+        )
+    )
+
+    # =====================================================
+    # VOICE MENU
+    # =====================================================
+
+    app.add_handler(
+        CallbackQueryHandler(
+            male_voice_menu,
+            pattern=r"^voice_menu_male$"
+        )
+    )
+
+    app.add_handler(
+        CallbackQueryHandler(
+            female_voice_menu,
+            pattern=r"^voice_menu_female$"
+        )
+    )
+
+    app.add_handler(
+        CallbackQueryHandler(
+            voice_back,
+            pattern=r"^voice_back$"
+        )
+    )
+
+    app.add_handler(
+        CallbackQueryHandler(
+            select_voice,
+            pattern=r"^selectvoice_"
+        )
+    )
+
+    # =====================================================
+    # DOWNLOAD
+    # =====================================================
+
+    app.add_handler(
+        CallbackQueryHandler(
+            download_mp3,
+            pattern=r"^download_"
+        )
+    )
+
+    # =====================================================
+    # TEXT
+    # =====================================================
+
+    app.add_handler(
+        MessageHandler(
+            filters.TEXT & ~filters.COMMAND,
+            text_to_voice
+        )
+    )
+
+    # =====================================================
+    # ERROR
+    # =====================================================
+
+    app.add_error_handler(
+        error_handler
+    )
+
+    # =====================================================
+    # START
+    # =====================================================
+
+    print("====================================")
+    print("VoiceGen BD Bot is running...")
+    print("Waiting for Telegram messages...")
+    print("====================================")
+
+    app.run_polling(
+        allowed_updates=Update.ALL_TYPES,
+        drop_pending_updates=True
+    )
+
+
+# =========================================================
+# RUN
+# =========================================================
+
+if __name__ == "__main__":
+    main()
