@@ -1,5 +1,8 @@
 import os
 import sqlite3
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
 import edge_tts
 
 from dotenv import load_dotenv
@@ -19,6 +22,36 @@ from database import init_db
 load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+
+
+# =========================
+# Render Web Server
+# =========================
+
+class HealthHandler(BaseHTTPRequestHandler):
+
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain")
+        self.end_headers()
+        self.wfile.write(b"VoiceGen BD Bot is running!")
+
+    def log_message(self, format, *args):
+        return
+
+
+def run_web_server():
+
+    port = int(os.environ.get("PORT", 10000))
+
+    server = HTTPServer(
+        ("0.0.0.0", port),
+        HealthHandler
+    )
+
+    print(f"Web server running on port {port}")
+
+    server.serve_forever()
 
 
 # =========================
@@ -336,6 +369,8 @@ async def voice_command(
 
     user = update.effective_user
 
+    save_user(user)
+
     language, voice = get_settings(user.id)
 
     language_name = LANGUAGES[language]["name"]
@@ -477,14 +512,12 @@ async def text_to_voice(
 
         await communicate.save(output_file)
 
-        # Voice message
         with open(output_file, "rb") as audio:
 
             await update.message.reply_voice(
                 voice=audio
             )
 
-        # Download button
         keyboard = [
             [
                 InlineKeyboardButton(
@@ -531,7 +564,6 @@ async def download_mp3(
         1
     )
 
-    # Security check
     if os.path.basename(file_name) != file_name:
 
         await query.message.reply_text(
@@ -578,6 +610,12 @@ async def download_mp3(
 # =========================
 
 def main():
+
+    # Start Render web server
+    threading.Thread(
+        target=run_web_server,
+        daemon=True
+    ).start()
 
     init_db()
 
