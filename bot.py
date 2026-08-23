@@ -3,19 +3,18 @@ import sqlite3
 import logging
 import threading
 import asyncio
-
+import time
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
+import edge_tts
 from dotenv import load_dotenv
-from gtts import gTTS
 
 from telegram import (
     Update,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
 )
-
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -42,9 +41,7 @@ if not BOT_TOKEN:
 PORT = int(os.getenv("PORT", "10000"))
 
 BASE_DIR = Path(__file__).resolve().parent
-
 DB_FILE = BASE_DIR / "users.db"
-
 DOWNLOAD_DIR = BASE_DIR / "downloads"
 
 DOWNLOAD_DIR.mkdir(exist_ok=True)
@@ -60,6 +57,180 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger(__name__)
+
+
+# =========================================================
+# VOICE LIST
+# =========================================================
+
+VOICES = {
+
+    # -------------------------
+    # BANGLA
+    # -------------------------
+    "bn": {
+        "🇧🇩 বাংলা পুরুষ 1": "bn-BD-PradeepNeural",
+        "🇧🇩 বাংলা মহিলা 1": "bn-BD-NabanitaNeural",
+    },
+
+    # -------------------------
+    # ENGLISH
+    # -------------------------
+    "en": {
+        "🇺🇸 English Male - Guy": "en-US-GuyNeural",
+        "🇺🇸 English Male - Christopher": "en-US-ChristopherNeural",
+        "🇺🇸 English Male - Eric": "en-US-EricNeural",
+        "🇺🇸 English Female - Jenny": "en-US-JennyNeural",
+        "🇺🇸 English Female - Aria": "en-US-AriaNeural",
+        "🇺🇸 English Female - Michelle": "en-US-MichelleNeural",
+    },
+
+    # -------------------------
+    # HINDI
+    # -------------------------
+    "hi": {
+        "🇮🇳 हिन्दी Male - Madhur": "hi-IN-MadhurNeural",
+        "🇮🇳 हिन्दी Female - Swara": "hi-IN-SwaraNeural",
+    },
+
+    # -------------------------
+    # URDU
+    # -------------------------
+    "ur": {
+        "🇵🇰 اردو Male - Asad": "ur-PK-AsadNeural",
+        "🇵🇰 اردو Female - Uzma": "ur-PK-UzmaNeural",
+    },
+
+    # -------------------------
+    # ARABIC
+    # -------------------------
+    "ar": {
+        "🇸🇦 العربية Male - Hamed": "ar-SA-HamedNeural",
+        "🇸🇦 العربية Female - Zariyah": "ar-SA-ZariyahNeural",
+    },
+}
+
+
+# =========================================================
+# DATABASE
+# =========================================================
+
+def init_db():
+
+    conn = sqlite3.connect(DB_FILE)
+
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            user_id INTEGER PRIMARY KEY,
+            username TEXT,
+            first_name TEXT,
+            selected_language TEXT DEFAULT 'bn',
+            selected_voice TEXT DEFAULT 'bn-BD-PradeepNeural'
+        )
+    """)
+
+    conn.commit()
+    conn.close()
+
+
+def save_user(user):
+
+    conn = sqlite3.connect(DB_FILE)
+
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        INSERT OR IGNORE INTO users
+        (user_id, username, first_name, selected_language, selected_voice)
+        VALUES (?, ?, ?, ?, ?)
+    """, (
+        user.id,
+        user.username,
+        user.first_name,
+        "bn",
+        "bn-BD-PradeepNeural"
+    ))
+
+    cursor.execute("""
+        UPDATE users
+        SET username = ?, first_name = ?
+        WHERE user_id = ?
+    """, (
+        user.username,
+        user.first_name,
+        user.id
+    ))
+
+    conn.commit()
+    conn.close()
+
+
+def get_settings(user_id):
+
+    conn = sqlite3.connect(DB_FILE)
+
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT selected_language, selected_voice
+        FROM users
+        WHERE user_id = ?
+    """, (user_id,))
+
+    row = cursor.fetchone()
+
+    conn.close()
+
+    if row:
+        return row[0], row[1]
+
+    return "bn", "bn-BD-PradeepNeural"
+
+
+def set_language(user_id, language):
+
+    conn = sqlite3.connect(DB_FILE)
+
+    cursor = conn.cursor()
+
+    default_voice = list(
+        VOICES.get(language, VOICES["bn"]).values()
+    )[0]
+
+    cursor.execute("""
+        UPDATE users
+        SET selected_language = ?,
+            selected_voice = ?
+        WHERE user_id = ?
+    """, (
+        language,
+        default_voice,
+        user_id
+    ))
+
+    conn.commit()
+    conn.close()
+
+
+def set_voice(user_id, voice):
+
+    conn = sqlite3.connect(DB_FILE)
+
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        UPDATE users
+        SET selected_voice = ?
+        WHERE user_id = ?
+    """, (
+        voice,
+        user_id
+    ))
+
+    conn.commit()
+    conn.close()
 
 
 # =========================================================
@@ -110,125 +281,6 @@ def start_health_server():
 
 
 # =========================================================
-# DATABASE
-# =========================================================
-
-def init_db():
-
-    conn = sqlite3.connect(DB_FILE)
-
-    cursor = conn.cursor()
-
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            user_id INTEGER PRIMARY KEY,
-            username TEXT,
-            first_name TEXT,
-            selected_language TEXT DEFAULT 'bn',
-            selected_voice TEXT DEFAULT 'default'
-        )
-    """)
-
-    conn.commit()
-
-    conn.close()
-
-
-def save_user(user):
-
-    conn = sqlite3.connect(DB_FILE)
-
-    cursor = conn.cursor()
-
-    cursor.execute("""
-        INSERT OR IGNORE INTO users
-        (user_id, username, first_name)
-        VALUES (?, ?, ?)
-    """, (
-        user.id,
-        user.username,
-        user.first_name
-    ))
-
-    cursor.execute("""
-        UPDATE users
-        SET username = ?, first_name = ?
-        WHERE user_id = ?
-    """, (
-        user.username,
-        user.first_name,
-        user.id
-    ))
-
-    conn.commit()
-
-    conn.close()
-
-
-def get_settings(user_id):
-
-    conn = sqlite3.connect(DB_FILE)
-
-    cursor = conn.cursor()
-
-    cursor.execute("""
-        SELECT selected_language, selected_voice
-        FROM users
-        WHERE user_id = ?
-    """, (user_id,))
-
-    row = cursor.fetchone()
-
-    conn.close()
-
-    if row:
-
-        return row[0], row[1]
-
-    return "bn", "default"
-
-
-def set_language(user_id, language):
-
-    conn = sqlite3.connect(DB_FILE)
-
-    cursor = conn.cursor()
-
-    cursor.execute("""
-        UPDATE users
-        SET selected_language = ?
-        WHERE user_id = ?
-    """, (
-        language,
-        user_id
-    ))
-
-    conn.commit()
-
-    conn.close()
-
-
-def set_voice(user_id, voice):
-
-    conn = sqlite3.connect(DB_FILE)
-
-    cursor = conn.cursor()
-
-    cursor.execute("""
-        UPDATE users
-        SET selected_voice = ?
-        WHERE user_id = ?
-    """, (
-        voice,
-        user_id
-    ))
-
-    conn.commit()
-
-    conn.close()
-
-
-# =========================================================
 # LANGUAGE KEYBOARD
 # =========================================================
 
@@ -241,7 +293,6 @@ def language_keyboard():
                 "🇧🇩 বাংলা",
                 callback_data="lang_bn"
             ),
-
             InlineKeyboardButton(
                 "🇬🇧 English",
                 callback_data="lang_en"
@@ -253,7 +304,6 @@ def language_keyboard():
                 "🇮🇳 हिन्दी",
                 callback_data="lang_hi"
             ),
-
             InlineKeyboardButton(
                 "🇵🇰 اردو",
                 callback_data="lang_ur"
@@ -276,25 +326,23 @@ def language_keyboard():
 # VOICE KEYBOARD
 # =========================================================
 
-def voice_keyboard():
+def voice_keyboard(language):
 
-    keyboard = [
+    voices = VOICES.get(
+        language,
+        VOICES["bn"]
+    )
 
-        [
+    keyboard = []
+
+    for name, voice_id in voices.items():
+
+        keyboard.append([
             InlineKeyboardButton(
-                "🎤 Default Voice",
-                callback_data="voice_default"
-            ),
-        ],
-
-        [
-            InlineKeyboardButton(
-                "🔊 Standard",
-                callback_data="voice_standard"
-            ),
-        ],
-
-    ]
+                name,
+                callback_data=f"voice:{voice_id}"
+            )
+        ])
 
     return InlineKeyboardMarkup(keyboard)
 
@@ -319,8 +367,8 @@ async def start(
 
         text = (
             "🎙️ <b>Welcome to VoiceGen BD!</b>\n\n"
-            "আপনি এখানে Text থেকে Voice তৈরি করতে পারবেন।\n\n"
-            "🌐 <b>Language নির্বাচন করুন:</b>"
+            "আপনি এখানে Text থেকে Voice/MP3 তৈরি করতে পারবেন।\n\n"
+            "🌐 <b>প্রথমে Language নির্বাচন করুন:</b>"
         )
 
         await update.message.reply_text(
@@ -365,9 +413,21 @@ async def voice_command(
     context: ContextTypes.DEFAULT_TYPE
 ):
 
+    user = update.effective_user
+
+    if not user:
+        return
+
+    save_user(user)
+
+    language, voice = get_settings(
+        user.id
+    )
+
     await update.message.reply_text(
-        "🎤 Select your voice:",
-        reply_markup=voice_keyboard()
+        "🎤 <b>Voice নির্বাচন করুন:</b>",
+        parse_mode="HTML",
+        reply_markup=voice_keyboard(language)
     )
 
 
@@ -431,10 +491,16 @@ async def language_selection(
     )
 
     await query.edit_message_text(
-        f"✅ Language selected: <b>{selected_name}</b>\n\n"
-        "এখন আপনার Text পাঠান।\n"
-        "আমি সেটিকে Voice/MP3 হিসেবে তৈরি করব।",
-        parse_mode="HTML"
+
+        f"✅ Language selected: "
+        f"<b>{selected_name}</b>\n\n"
+
+        "🎤 এখন আপনার Voice নির্বাচন করুন:",
+
+        parse_mode="HTML",
+
+        reply_markup=voice_keyboard(language)
+
     )
 
     logger.info(
@@ -459,24 +525,29 @@ async def voice_selection(
 
     user_id = query.from_user.id
 
-    voice = query.data.replace(
-        "voice_",
+    voice_id = query.data.replace(
+        "voice:",
         ""
     )
 
     set_voice(
         user_id,
-        voice
+        voice_id
     )
 
     await query.edit_message_text(
-        f"✅ Voice selected: {voice}\n\n"
-        "এখন আপনার Text পাঠান।"
+
+        "✅ <b>Voice selected!</b>\n\n"
+        "📝 এখন আপনার Text পাঠান।\n\n"
+        "🎙️ আমি সেটিকে MP3 Voice-এ তৈরি করে দেব।",
+
+        parse_mode="HTML"
+
     )
 
     logger.info(
         "Voice %s selected by user %s",
-        voice,
+        voice_id,
         user_id
     )
 
@@ -528,50 +599,32 @@ async def text_to_voice(
     )
 
     await update.message.reply_text(
-        "⏳ Voice তৈরি হচ্ছে...\n"
-        "একটু অপেক্ষা করুন।"
+        "⏳ <b>Voice তৈরি হচ্ছে...</b>\n\n"
+        "একটু অপেক্ষা করুন।",
+        parse_mode="HTML"
     )
 
-    language_map = {
-
-        "bn": "bn",
-
-        "en": "en",
-
-        "hi": "hi",
-
-        "ur": "ur",
-
-        "ar": "ar",
-
-    }
-
-    lang_code = language_map.get(
-        language,
-        "bn"
-    )
+    message_id = update.message.message_id
 
     output_file = (
-        DOWNLOAD_DIR
-        /
-        f"{user.id}_{update.message.message_id}.mp3"
+        DOWNLOAD_DIR /
+        f"{user.id}_{message_id}.mp3"
     )
 
     try:
 
         logger.info(
-            "Creating TTS for user %s, language=%s",
+            "Creating TTS for user %s, voice=%s",
             user.id,
-            lang_code
+            voice
         )
 
-        tts = gTTS(
+        communicate = edge_tts.Communicate(
             text=text,
-            lang=lang_code,
-            slow=False
+            voice=voice
         )
 
-        tts.save(
+        await communicate.save(
             str(output_file)
         )
 
@@ -580,10 +633,42 @@ async def text_to_voice(
             output_file
         )
 
-        await send_mp3(
-            update,
-            output_file
-        )
+        # ---------------------------------------------
+        # SEND AUDIO
+        # ---------------------------------------------
+
+        with open(
+            output_file,
+            "rb"
+        ) as audio_file:
+
+            await update.message.reply_audio(
+
+                audio=audio_file,
+
+                title="VoiceGen BD",
+
+                performer="VoiceGen BD Bot",
+
+                caption=(
+                    "🎙️ Voice তৈরি হয়েছে!\n\n"
+                    "⬇️ নিচের Download MP3 button "
+                    "চাপলে MP3 ফাইল পাবেন।"
+                ),
+
+                reply_markup=InlineKeyboardMarkup([
+                    [
+                        InlineKeyboardButton(
+                            "⬇️ Download MP3",
+                            callback_data=(
+                                f"download:{user.id}:"
+                                f"{message_id}"
+                            )
+                        )
+                    ]
+                ])
+
+            )
 
         logger.info(
             "MP3 sent successfully to user %s",
@@ -596,54 +681,133 @@ async def text_to_voice(
             "TTS Error"
         )
 
+        await update.message.reply_text(
+
+            "❌ <b>Voice তৈরি করা যায়নি।</b>\n\n"
+            "দয়া করে আবার চেষ্টা করুন।\n\n"
+            f"Error: {str(e)[:500]}",
+
+            parse_mode="HTML"
+        )
+
+
+# =========================================================
+# DOWNLOAD MP3 BUTTON
+# =========================================================
+
+async def download_mp3(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    query = update.callback_query
+
+    await query.answer(
+        "⏳ MP3 প্রস্তুত হচ্ছে..."
+    )
+
+    try:
+
+        parts = query.data.split(":")
+
+        if len(parts) != 3:
+            return
+
+        user_id = int(parts[1])
+        message_id = int(parts[2])
+
+        # Security check
+        if query.from_user.id != user_id:
+
+            await query.answer(
+                "❌ এই ফাইল আপনার জন্য নয়।",
+                show_alert=True
+            )
+
+            return
+
+        file_path = (
+            DOWNLOAD_DIR /
+            f"{user_id}_{message_id}.mp3"
+        )
+
+        if not file_path.exists():
+
+            await query.message.reply_text(
+                "❌ MP3 ফাইলটি আর পাওয়া যাচ্ছে না।\n"
+                "নতুন করে Text পাঠিয়ে Voice তৈরি করুন।"
+            )
+
+            return
+
+        with open(
+            file_path,
+            "rb"
+        ) as audio_file:
+
+            await query.message.reply_document(
+
+                document=audio_file,
+
+                filename="VoiceGen-BD.mp3",
+
+                caption=(
+                    "⬇️ আপনার MP3 Download করুন।\n"
+                    "🎙️ VoiceGen BD"
+                )
+
+            )
+
+        logger.info(
+            "MP3 downloaded by user %s",
+            user_id
+        )
+
+        # Delete after sending
         try:
-
-            await update.message.reply_text(
-                "❌ Voice তৈরি করা যায়নি।\n\n"
-                "দয়া করে আবার চেষ্টা করুন।\n\n"
-                f"Error: {str(e)[:500]}"
-            )
-
+            file_path.unlink()
         except Exception:
+            pass
 
-            logger.exception(
-                "Could not send TTS error message"
-            )
+    except Exception:
 
-    finally:
+        logger.exception(
+            "Download error"
+        )
 
-        if output_file.exists():
+        await query.message.reply_text(
+            "❌ MP3 পাঠাতে সমস্যা হয়েছে।"
+        )
+
+
+# =========================================================
+# CLEAN OLD FILES
+# =========================================================
+
+def cleanup_old_files():
+
+    try:
+
+        now = time.time()
+
+        for file in DOWNLOAD_DIR.glob("*.mp3"):
 
             try:
 
-                output_file.unlink()
+                age = now - file.stat().st_mtime
+
+                # Delete files older than 2 hours
+                if age > 7200:
+
+                    file.unlink()
 
             except Exception:
+                pass
 
-                logger.exception(
-                    "Could not delete temporary MP3"
-                )
+    except Exception:
 
-
-# =========================================================
-# SEND MP3
-# =========================================================
-
-async def send_mp3(
-    update: Update,
-    file_path
-):
-
-    with open(
-        file_path,
-        "rb"
-    ) as audio_file:
-
-        await update.message.reply_audio(
-            audio=audio_file,
-            title="VoiceGen BD",
-            performer="VoiceGen BD Bot",
-            caption="🎙️ Generated by VoiceGen BD"
+        logger.exception(
+            "Cleanup error"
         )
 
 
@@ -663,10 +827,49 @@ async def error_handler(
 
 
 # =========================================================
-# BUILD TELEGRAM APPLICATION
+# MAIN
 # =========================================================
 
-def build_application():
+def main():
+
+    print("====================================")
+    print("          VoiceGen BD Bot")
+    print("====================================")
+
+    print(
+        f"Render PORT: {PORT}"
+    )
+
+    # ---------------------------------------------
+    # DATABASE
+    # ---------------------------------------------
+
+    init_db()
+
+    # ---------------------------------------------
+    # CLEAN OLD MP3
+    # ---------------------------------------------
+
+    cleanup_old_files()
+
+    # ---------------------------------------------
+    # HEALTH SERVER
+    # ---------------------------------------------
+
+    health_thread = threading.Thread(
+        target=start_health_server,
+        daemon=True
+    )
+
+    health_thread.start()
+
+    print(
+        "Health server started."
+    )
+
+    # ---------------------------------------------
+    # TELEGRAM APPLICATION
+    # ---------------------------------------------
 
     app = (
         Application
@@ -675,9 +878,9 @@ def build_application():
         .build()
     )
 
-    # =====================================================
-    # COMMAND HANDLERS
-    # =====================================================
+    # ---------------------------------------------
+    # COMMANDS
+    # ---------------------------------------------
 
     app.add_handler(
         CommandHandler(
@@ -707,9 +910,9 @@ def build_application():
         )
     )
 
-    # =====================================================
-    # CALLBACK HANDLERS
-    # =====================================================
+    # ---------------------------------------------
+    # LANGUAGE BUTTON
+    # ---------------------------------------------
 
     app.add_handler(
         CallbackQueryHandler(
@@ -718,16 +921,31 @@ def build_application():
         )
     )
 
+    # ---------------------------------------------
+    # VOICE BUTTON
+    # ---------------------------------------------
+
     app.add_handler(
         CallbackQueryHandler(
             voice_selection,
-            pattern=r"^voice_"
+            pattern=r"^voice:"
         )
     )
 
-    # =====================================================
-    # TEXT HANDLER
-    # =====================================================
+    # ---------------------------------------------
+    # DOWNLOAD BUTTON
+    # ---------------------------------------------
+
+    app.add_handler(
+        CallbackQueryHandler(
+            download_mp3,
+            pattern=r"^download:"
+        )
+    )
+
+    # ---------------------------------------------
+    # TEXT MESSAGE
+    # ---------------------------------------------
 
     app.add_handler(
         MessageHandler(
@@ -736,158 +954,26 @@ def build_application():
         )
     )
 
-    # =====================================================
+    # ---------------------------------------------
     # ERROR HANDLER
-    # =====================================================
+    # ---------------------------------------------
 
     app.add_error_handler(
         error_handler
     )
 
-    return app
+    # ---------------------------------------------
+    # START BOT
+    # ---------------------------------------------
 
+    print("====================================")
+    print("VoiceGen BD Bot is running...")
+    print("Waiting for Telegram messages...")
+    print("====================================")
 
-# =========================================================
-# RUN TELEGRAM BOT
-# =========================================================
-
-async def run_bot():
-
-    app = build_application()
-
-    try:
-
-        print(
-            "Removing old Telegram webhook..."
-        )
-
-        # পুরোনো webhook remove করা
-        await app.bot.delete_webhook(
-            drop_pending_updates=True
-        )
-
-        print(
-            "Telegram webhook removed."
-        )
-
-        # Application initialize
-        await app.initialize()
-
-        # Application start
-        await app.start()
-
-        # Polling start
-        await app.updater.start_polling(
-            allowed_updates=Update.ALL_TYPES,
-            drop_pending_updates=False
-        )
-
-        print(
-            "===================================="
-        )
-
-        print(
-            "VoiceGen BD Bot is running..."
-        )
-
-        print(
-            "Waiting for Telegram messages..."
-        )
-
-        print(
-            "===================================="
-        )
-
-        # Bot চালু রাখা
-        await asyncio.Event().wait()
-
-    except Exception:
-
-        logger.exception(
-            "Telegram bot error"
-        )
-
-        raise
-
-    finally:
-
-        try:
-
-            if app.updater:
-
-                await app.updater.stop()
-
-        except Exception:
-
-            logger.exception(
-                "Updater stop error"
-            )
-
-        try:
-
-            await app.stop()
-
-        except Exception:
-
-            logger.exception(
-                "Application stop error"
-            )
-
-        try:
-
-            await app.shutdown()
-
-        except Exception:
-
-            logger.exception(
-                "Application shutdown error"
-            )
-
-
-# =========================================================
-# MAIN
-# =========================================================
-
-def main():
-
-    print(
-        "===================================="
-    )
-
-    print(
-        "          VoiceGen BD Bot"
-    )
-
-    print(
-        "===================================="
-    )
-
-    print(
-        f"Render PORT: {PORT}"
-    )
-
-    print(
-        "Starting health server..."
-    )
-
-    # Database
-    init_db()
-
-    # Render health server
-    health_thread = threading.Thread(
-        target=start_health_server,
-        daemon=True
-    )
-
-    health_thread.start()
-
-    print(
-        "Health server started."
-    )
-
-    # Telegram bot
-    asyncio.run(
-        run_bot()
+    app.run_polling(
+        allowed_updates=Update.ALL_TYPES,
+        drop_pending_updates=True
     )
 
 
@@ -896,5 +982,4 @@ def main():
 # =========================================================
 
 if __name__ == "__main__":
-
     main()
