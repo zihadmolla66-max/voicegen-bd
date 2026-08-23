@@ -2,6 +2,8 @@ import os
 import sqlite3
 import logging
 import threading
+import asyncio
+
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -13,6 +15,7 @@ from telegram import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
 )
+
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -32,12 +35,16 @@ load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 if not BOT_TOKEN:
-    raise ValueError("BOT_TOKEN পাওয়া যায়নি। Render Environment Variables চেক করুন।")
+    raise ValueError(
+        "BOT_TOKEN পাওয়া যায়নি। Render Environment Variables চেক করুন।"
+    )
 
 PORT = int(os.getenv("PORT", "10000"))
 
 BASE_DIR = Path(__file__).resolve().parent
+
 DB_FILE = BASE_DIR / "users.db"
+
 DOWNLOAD_DIR = BASE_DIR / "downloads"
 
 DOWNLOAD_DIR.mkdir(exist_ok=True)
@@ -62,8 +69,14 @@ logger = logging.getLogger(__name__)
 class HealthHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
+
         self.send_response(200)
-        self.send_header("Content-Type", "text/plain; charset=utf-8")
+
+        self.send_header(
+            "Content-Type",
+            "text/plain; charset=utf-8"
+        )
+
         self.end_headers()
 
         self.wfile.write(
@@ -75,18 +88,25 @@ class HealthHandler(BaseHTTPRequestHandler):
 
 
 def start_health_server():
+
     try:
+
         server = HTTPServer(
             ("0.0.0.0", PORT),
             HealthHandler
         )
 
-        print(f"Health server running on port {PORT}")
+        print(
+            f"Health server running on port {PORT}"
+        )
 
         server.serve_forever()
 
     except Exception:
-        logger.exception("Health server error")
+
+        logger.exception(
+            "Health server error"
+        )
 
 
 # =========================================================
@@ -110,6 +130,7 @@ def init_db():
     """)
 
     conn.commit()
+
     conn.close()
 
 
@@ -140,6 +161,7 @@ def save_user(user):
     ))
 
     conn.commit()
+
     conn.close()
 
 
@@ -160,6 +182,7 @@ def get_settings(user_id):
     conn.close()
 
     if row:
+
         return row[0], row[1]
 
     return "bn", "default"
@@ -181,6 +204,7 @@ def set_language(user_id, language):
     ))
 
     conn.commit()
+
     conn.close()
 
 
@@ -200,6 +224,7 @@ def set_voice(user_id, voice):
     ))
 
     conn.commit()
+
     conn.close()
 
 
@@ -210,32 +235,38 @@ def set_voice(user_id, voice):
 def language_keyboard():
 
     keyboard = [
+
         [
             InlineKeyboardButton(
                 "🇧🇩 বাংলা",
                 callback_data="lang_bn"
             ),
+
             InlineKeyboardButton(
                 "🇬🇧 English",
                 callback_data="lang_en"
             ),
         ],
+
         [
             InlineKeyboardButton(
                 "🇮🇳 हिन्दी",
                 callback_data="lang_hi"
             ),
+
             InlineKeyboardButton(
                 "🇵🇰 اردو",
                 callback_data="lang_ur"
             ),
         ],
+
         [
             InlineKeyboardButton(
                 "🇸🇦 العربية",
                 callback_data="lang_ar"
             ),
         ],
+
     ]
 
     return InlineKeyboardMarkup(keyboard)
@@ -248,18 +279,21 @@ def language_keyboard():
 def voice_keyboard():
 
     keyboard = [
+
         [
             InlineKeyboardButton(
                 "🎤 Default Voice",
                 callback_data="voice_default"
             ),
         ],
+
         [
             InlineKeyboardButton(
                 "🔊 Standard",
                 callback_data="voice_standard"
             ),
         ],
+
     ]
 
     return InlineKeyboardMarkup(keyboard)
@@ -301,7 +335,10 @@ async def start(
         )
 
     except Exception:
-        logger.exception("START handler error")
+
+        logger.exception(
+            "START handler error"
+        )
 
 
 # =========================================================
@@ -375,11 +412,17 @@ async def language_selection(
     )
 
     language_names = {
+
         "bn": "🇧🇩 বাংলা",
+
         "en": "🇬🇧 English",
+
         "hi": "🇮🇳 हिन्दी",
+
         "ur": "🇵🇰 اردو",
+
         "ar": "🇸🇦 العربية",
+
     }
 
     selected_name = language_names.get(
@@ -490,11 +533,17 @@ async def text_to_voice(
     )
 
     language_map = {
+
         "bn": "bn",
+
         "en": "en",
+
         "hi": "hi",
+
         "ur": "ur",
+
         "ar": "ar",
+
     }
 
     lang_code = language_map.get(
@@ -503,7 +552,8 @@ async def text_to_voice(
     )
 
     output_file = (
-        DOWNLOAD_DIR /
+        DOWNLOAD_DIR
+        /
         f"{user.id}_{update.message.message_id}.mp3"
     )
 
@@ -530,7 +580,7 @@ async def text_to_voice(
             output_file
         )
 
-        await download_mp3(
+        await send_mp3(
             update,
             output_file
         )
@@ -546,20 +596,30 @@ async def text_to_voice(
             "TTS Error"
         )
 
-        await update.message.reply_text(
-            "❌ Voice তৈরি করা যায়নি।\n\n"
-            "দয়া করে আবার চেষ্টা করুন।\n\n"
-            f"Error: {str(e)[:500]}"
-        )
+        try:
+
+            await update.message.reply_text(
+                "❌ Voice তৈরি করা যায়নি।\n\n"
+                "দয়া করে আবার চেষ্টা করুন।\n\n"
+                f"Error: {str(e)[:500]}"
+            )
+
+        except Exception:
+
+            logger.exception(
+                "Could not send TTS error message"
+            )
 
     finally:
 
         if output_file.exists():
 
             try:
+
                 output_file.unlink()
 
             except Exception:
+
                 logger.exception(
                     "Could not delete temporary MP3"
                 )
@@ -569,7 +629,7 @@ async def text_to_voice(
 # SEND MP3
 # =========================================================
 
-async def download_mp3(
+async def send_mp3(
     update: Update,
     file_path
 ):
@@ -603,31 +663,11 @@ async def error_handler(
 
 
 # =========================================================
-# MAIN
+# BUILD TELEGRAM APPLICATION
 # =========================================================
 
-def main():
+def build_application():
 
-    print("====================================")
-    print("          VoiceGen BD Bot")
-    print("====================================")
-    print(f"Render PORT: {PORT}")
-    print("Starting health server...")
-
-    # Database
-    init_db()
-
-    # Render health server
-    health_thread = threading.Thread(
-        target=start_health_server,
-        daemon=True
-    )
-
-    health_thread.start()
-
-    print("Health server started.")
-
-    # Telegram Application
     app = (
         Application
         .builder()
@@ -636,7 +676,7 @@ def main():
     )
 
     # =====================================================
-    # HANDLERS
+    # COMMAND HANDLERS
     # =====================================================
 
     app.add_handler(
@@ -667,6 +707,10 @@ def main():
         )
     )
 
+    # =====================================================
+    # CALLBACK HANDLERS
+    # =====================================================
+
     app.add_handler(
         CallbackQueryHandler(
             language_selection,
@@ -681,6 +725,10 @@ def main():
         )
     )
 
+    # =====================================================
+    # TEXT HANDLER
+    # =====================================================
+
     app.add_handler(
         MessageHandler(
             filters.TEXT & ~filters.COMMAND,
@@ -688,26 +736,158 @@ def main():
         )
     )
 
+    # =====================================================
+    # ERROR HANDLER
+    # =====================================================
+
     app.add_error_handler(
         error_handler
     )
 
-    # =====================================================
-    # START
-    # =====================================================
+    return app
 
-    print("====================================")
-    print("VoiceGen BD Bot is running...")
-    print("Waiting for Telegram messages...")
-    print("====================================")
 
-    # Important:
-    # Remove old Telegram webhook before polling.
-    # This prevents webhook/polling conflict.
+# =========================================================
+# RUN TELEGRAM BOT
+# =========================================================
 
-    app.run_polling(
-        allowed_updates=Update.ALL_TYPES,
-        drop_pending_updates=True
+async def run_bot():
+
+    app = build_application()
+
+    try:
+
+        print(
+            "Removing old Telegram webhook..."
+        )
+
+        # পুরোনো webhook remove করা
+        await app.bot.delete_webhook(
+            drop_pending_updates=True
+        )
+
+        print(
+            "Telegram webhook removed."
+        )
+
+        # Application initialize
+        await app.initialize()
+
+        # Application start
+        await app.start()
+
+        # Polling start
+        await app.updater.start_polling(
+            allowed_updates=Update.ALL_TYPES,
+            drop_pending_updates=False
+        )
+
+        print(
+            "===================================="
+        )
+
+        print(
+            "VoiceGen BD Bot is running..."
+        )
+
+        print(
+            "Waiting for Telegram messages..."
+        )
+
+        print(
+            "===================================="
+        )
+
+        # Bot চালু রাখা
+        await asyncio.Event().wait()
+
+    except Exception:
+
+        logger.exception(
+            "Telegram bot error"
+        )
+
+        raise
+
+    finally:
+
+        try:
+
+            if app.updater:
+
+                await app.updater.stop()
+
+        except Exception:
+
+            logger.exception(
+                "Updater stop error"
+            )
+
+        try:
+
+            await app.stop()
+
+        except Exception:
+
+            logger.exception(
+                "Application stop error"
+            )
+
+        try:
+
+            await app.shutdown()
+
+        except Exception:
+
+            logger.exception(
+                "Application shutdown error"
+            )
+
+
+# =========================================================
+# MAIN
+# =========================================================
+
+def main():
+
+    print(
+        "===================================="
+    )
+
+    print(
+        "          VoiceGen BD Bot"
+    )
+
+    print(
+        "===================================="
+    )
+
+    print(
+        f"Render PORT: {PORT}"
+    )
+
+    print(
+        "Starting health server..."
+    )
+
+    # Database
+    init_db()
+
+    # Render health server
+    health_thread = threading.Thread(
+        target=start_health_server,
+        daemon=True
+    )
+
+    health_thread.start()
+
+    print(
+        "Health server started."
+    )
+
+    # Telegram bot
+    asyncio.run(
+        run_bot()
     )
 
 
@@ -716,4 +896,5 @@ def main():
 # =========================================================
 
 if __name__ == "__main__":
+
     main()
