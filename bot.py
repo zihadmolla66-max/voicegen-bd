@@ -1,157 +1,113 @@
 import os
 import sqlite3
+import logging
 import threading
+from pathlib import Path
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
-import edge_tts
-
 from dotenv import load_dotenv
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from gtts import gTTS
+
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+)
 from telegram.ext import (
     Application,
     CommandHandler,
-    MessageHandler,
     CallbackQueryHandler,
+    MessageHandler,
     ContextTypes,
     filters,
 )
 
-from database import init_db
 
+# =========================================================
+# CONFIG
+# =========================================================
 
 load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
+if not BOT_TOKEN:
+    raise ValueError("BOT_TOKEN পাওয়া যায়নি। Render Environment Variables চেক করুন।")
 
-# =========================
-# Render Web Server
-# =========================
+PORT = int(os.getenv("PORT", "10000"))
+
+BASE_DIR = Path(__file__).resolve().parent
+DB_FILE = BASE_DIR / "users.db"
+DOWNLOAD_DIR = BASE_DIR / "downloads"
+
+DOWNLOAD_DIR.mkdir(exist_ok=True)
+
+
+# =========================================================
+# LOGGING
+# =========================================================
+
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO,
+)
+
+logger = logging.getLogger(__name__)
+
+
+# =========================================================
+# RENDER HEALTH SERVER
+# =========================================================
 
 class HealthHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         self.send_response(200)
-        self.send_header("Content-Type", "text/plain")
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
         self.end_headers()
-        self.wfile.write(b"VoiceGen BD Bot is running!")
+
+        self.wfile.write(
+            b"VoiceGen BD Bot is running!"
+        )
 
     def log_message(self, format, *args):
         return
 
 
-def run_web_server():
+def start_health_server():
+    try:
+        server = HTTPServer(
+            ("0.0.0.0", PORT),
+            HealthHandler
+        )
 
-    port = int(os.environ.get("PORT", 10000))
+        print(f"Health server running on port {PORT}")
 
-    server = HTTPServer(
-        ("0.0.0.0", port),
-        HealthHandler
-    )
+        server.serve_forever()
 
-    print(f"Web server running on port {port}")
-
-    server.serve_forever()
-
-
-# =========================
-# Language & Voice Settings
-# =========================
-
-LANGUAGES = {
-    "bn": {
-        "name": "🇧🇩 বাংলা",
-        "voices": {
-            "female": "bn-BD-NabanitaNeural",
-            "male": "bn-BD-PradeepNeural",
-        },
-    },
-
-    "en_us": {
-        "name": "🇺🇸 English (US)",
-        "voices": {
-            "female": "en-US-JennyNeural",
-            "male": "en-US-GuyNeural",
-        },
-    },
-
-    "hi": {
-        "name": "🇮🇳 Hindi",
-        "voices": {
-            "female": "hi-IN-SwaraNeural",
-            "male": "hi-IN-MadhurNeural",
-        },
-    },
-
-    "ur": {
-        "name": "🇵🇰 Urdu",
-        "voices": {
-            "female": "ur-PK-UzmaNeural",
-            "male": "ur-PK-AsadNeural",
-        },
-    },
-
-    "ar": {
-        "name": "🇸🇦 Arabic",
-        "voices": {
-            "female": "ar-SA-ZariyahNeural",
-            "male": "ar-SA-HamedNeural",
-        },
-    },
-
-    "es": {
-        "name": "🇪🇸 Spanish",
-        "voices": {
-            "female": "es-ES-ElviraNeural",
-            "male": "es-ES-AlvaroNeural",
-        },
-    },
-
-    "fr": {
-        "name": "🇫🇷 French",
-        "voices": {
-            "female": "fr-FR-DeniseNeural",
-            "male": "fr-FR-HenriNeural",
-        },
-    },
-
-    "ja": {
-        "name": "🇯🇵 Japanese",
-        "voices": {
-            "female": "ja-JP-NanamiNeural",
-            "male": "ja-JP-KeitaNeural",
-        },
-    },
-}
+    except Exception:
+        logger.exception("Health server error")
 
 
-# =========================
-# Database
-# =========================
+# =========================================================
+# DATABASE
+# =========================================================
 
-def ensure_columns():
+def init_db():
 
-    conn = sqlite3.connect("voicegen.db")
+    conn = sqlite3.connect(DB_FILE)
+
     cursor = conn.cursor()
 
-    cursor.execute("PRAGMA table_info(users)")
-    columns = [row[1] for row in cursor.fetchall()]
-
-    if "selected_voice" not in columns:
-        cursor.execute(
-            """
-            ALTER TABLE users
-            ADD COLUMN selected_voice TEXT DEFAULT 'female'
-            """
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            user_id INTEGER PRIMARY KEY,
+            username TEXT,
+            first_name TEXT,
+            selected_language TEXT DEFAULT 'bn',
+            selected_voice TEXT DEFAULT 'default'
         )
-
-    if "selected_language" not in columns:
-        cursor.execute(
-            """
-            ALTER TABLE users
-            ADD COLUMN selected_language TEXT DEFAULT 'bn'
-            """
-        )
+    """)
 
     conn.commit()
     conn.close()
@@ -159,17 +115,29 @@ def ensure_columns():
 
 def save_user(user):
 
-    conn = sqlite3.connect("voicegen.db")
+    conn = sqlite3.connect(DB_FILE)
+
     cursor = conn.cursor()
 
-    cursor.execute(
-        """
+    cursor.execute("""
         INSERT OR IGNORE INTO users
-        (user_id, username)
-        VALUES (?, ?)
-        """,
-        (user.id, user.username),
-    )
+        (user_id, username, first_name)
+        VALUES (?, ?, ?)
+    """, (
+        user.id,
+        user.username,
+        user.first_name
+    ))
+
+    cursor.execute("""
+        UPDATE users
+        SET username = ?, first_name = ?
+        WHERE user_id = ?
+    """, (
+        user.username,
+        user.first_name,
+        user.id
+    ))
 
     conn.commit()
     conn.close()
@@ -177,50 +145,40 @@ def save_user(user):
 
 def get_settings(user_id):
 
-    conn = sqlite3.connect("voicegen.db")
+    conn = sqlite3.connect(DB_FILE)
+
     cursor = conn.cursor()
 
-    cursor.execute(
-        """
+    cursor.execute("""
         SELECT selected_language, selected_voice
         FROM users
         WHERE user_id = ?
-        """,
-        (user_id,),
-    )
+    """, (user_id,))
 
-    result = cursor.fetchone()
+    row = cursor.fetchone()
 
     conn.close()
 
-    if result:
-        language = result[0] or "bn"
-        voice = result[1] or "female"
+    if row:
+        return row[0], row[1]
 
-        if language not in LANGUAGES:
-            language = "bn"
-
-        if voice not in ["female", "male"]:
-            voice = "female"
-
-        return language, voice
-
-    return "bn", "female"
+    return "bn", "default"
 
 
 def set_language(user_id, language):
 
-    conn = sqlite3.connect("voicegen.db")
+    conn = sqlite3.connect(DB_FILE)
+
     cursor = conn.cursor()
 
-    cursor.execute(
-        """
+    cursor.execute("""
         UPDATE users
         SET selected_language = ?
         WHERE user_id = ?
-        """,
-        (language, user_id),
-    )
+    """, (
+        language,
+        user_id
+    ))
 
     conn.commit()
     conn.close()
@@ -228,25 +186,26 @@ def set_language(user_id, language):
 
 def set_voice(user_id, voice):
 
-    conn = sqlite3.connect("voicegen.db")
+    conn = sqlite3.connect(DB_FILE)
+
     cursor = conn.cursor()
 
-    cursor.execute(
-        """
+    cursor.execute("""
         UPDATE users
         SET selected_voice = ?
         WHERE user_id = ?
-        """,
-        (voice, user_id),
-    )
+    """, (
+        voice,
+        user_id
+    ))
 
     conn.commit()
     conn.close()
 
 
-# =========================
-# Language Keyboard
-# =========================
+# =========================================================
+# LANGUAGE KEYBOARD
+# =========================================================
 
 def language_keyboard():
 
@@ -254,41 +213,27 @@ def language_keyboard():
         [
             InlineKeyboardButton(
                 "🇧🇩 বাংলা",
-                callback_data="lang:bn"
+                callback_data="lang_bn"
             ),
             InlineKeyboardButton(
-                "🇺🇸 English",
-                callback_data="lang:en_us"
-            ),
-        ],
-        [
-            InlineKeyboardButton(
-                "🇮🇳 Hindi",
-                callback_data="lang:hi"
-            ),
-            InlineKeyboardButton(
-                "🇵🇰 Urdu",
-                callback_data="lang:ur"
+                "🇬🇧 English",
+                callback_data="lang_en"
             ),
         ],
         [
             InlineKeyboardButton(
-                "🇸🇦 Arabic",
-                callback_data="lang:ar"
+                "🇮🇳 हिन्दी",
+                callback_data="lang_hi"
             ),
             InlineKeyboardButton(
-                "🇪🇸 Spanish",
-                callback_data="lang:es"
+                "🇵🇰 اردو",
+                callback_data="lang_ur"
             ),
         ],
         [
             InlineKeyboardButton(
-                "🇫🇷 French",
-                callback_data="lang:fr"
-            ),
-            InlineKeyboardButton(
-                "🇯🇵 Japanese",
-                callback_data="lang:ja"
+                "🇸🇦 العربية",
+                callback_data="lang_ar"
             ),
         ],
     ]
@@ -296,56 +241,72 @@ def language_keyboard():
     return InlineKeyboardMarkup(keyboard)
 
 
-# =========================
-# Voice Keyboard
-# =========================
+# =========================================================
+# VOICE KEYBOARD
+# =========================================================
 
 def voice_keyboard():
 
     keyboard = [
         [
             InlineKeyboardButton(
-                "👩 Female",
-                callback_data="voice:female"
-            ),
-            InlineKeyboardButton(
-                "👨 Male",
-                callback_data="voice:male"
+                "🎤 Default Voice",
+                callback_data="voice_default"
             ),
         ],
         [
             InlineKeyboardButton(
-                "🌐 Change Language",
-                callback_data="change_language"
-            )
+                "🔊 Standard",
+                callback_data="voice_standard"
+            ),
         ],
     ]
 
     return InlineKeyboardMarkup(keyboard)
 
 
-# =========================
-# /start
-# =========================
+# =========================================================
+# START
+# =========================================================
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
 
-    user = update.effective_user
+    try:
 
-    save_user(user)
+        user = update.effective_user
 
-    language, voice = get_settings(user.id)
+        if not user:
+            return
 
-    await update.message.reply_text(
-        "🎙️ Welcome to VoiceGen BD!\n\n"
-        "🌐 Language এবং 🎤 Voice নির্বাচন করো:",
-        reply_markup=language_keyboard()
-    )
+        save_user(user)
+
+        text = (
+            "🎙️ <b>Welcome to VoiceGen BD!</b>\n\n"
+            "আপনি এখানে Text থেকে Voice তৈরি করতে পারবেন।\n\n"
+            "🌐 <b>Language নির্বাচন করুন:</b>"
+        )
+
+        await update.message.reply_text(
+            text,
+            parse_mode="HTML",
+            reply_markup=language_keyboard()
+        )
+
+        logger.info(
+            "START received from user %s",
+            user.id
+        )
+
+    except Exception:
+        logger.exception("START handler error")
 
 
-# =========================
-# /language
-# =========================
+# =========================================================
+# LANGUAGE COMMAND
+# =========================================================
 
 async def language_command(
     update: Update,
@@ -353,39 +314,44 @@ async def language_command(
 ):
 
     await update.message.reply_text(
-        "🌐 Select Language:",
+        "🌐 Select your language:",
         reply_markup=language_keyboard()
     )
 
 
-# =========================
-# /voice
-# =========================
+# =========================================================
+# VOICE COMMAND
+# =========================================================
 
 async def voice_command(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
 
-    user = update.effective_user
-
-    save_user(user)
-
-    language, voice = get_settings(user.id)
-
-    language_name = LANGUAGES[language]["name"]
-
     await update.message.reply_text(
-        f"🌐 Language: {language_name}\n"
-        f"🎤 Voice: {voice.title()}\n\n"
-        "Voice নির্বাচন করো:",
+        "🎤 Select your voice:",
         reply_markup=voice_keyboard()
     )
 
 
-# =========================
-# Language Selection
-# =========================
+# =========================================================
+# CHANGE LANGUAGE
+# =========================================================
+
+async def change_language(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    await update.message.reply_text(
+        "🌐 Choose a language:",
+        reply_markup=language_keyboard()
+    )
+
+
+# =========================================================
+# LANGUAGE SELECTION
+# =========================================================
 
 async def language_selection(
     update: Update,
@@ -396,30 +362,48 @@ async def language_selection(
 
     await query.answer()
 
-    user = query.from_user
+    user_id = query.from_user.id
 
-    language = query.data.replace("lang:", "")
+    language = query.data.replace(
+        "lang_",
+        ""
+    )
 
-    if language not in LANGUAGES:
-        return
+    set_language(
+        user_id,
+        language
+    )
 
-    save_user(user)
+    language_names = {
+        "bn": "🇧🇩 বাংলা",
+        "en": "🇬🇧 English",
+        "hi": "🇮🇳 हिन्दी",
+        "ur": "🇵🇰 اردو",
+        "ar": "🇸🇦 العربية",
+    }
 
-    set_language(user.id, language)
-
-    language_name = LANGUAGES[language]["name"]
+    selected_name = language_names.get(
+        language,
+        "Unknown"
+    )
 
     await query.edit_message_text(
-        f"✅ Language selected!\n\n"
-        f"🌐 {language_name}\n\n"
-        "এখন Voice নির্বাচন করো:",
-        reply_markup=voice_keyboard()
+        f"✅ Language selected: <b>{selected_name}</b>\n\n"
+        "এখন আপনার Text পাঠান।\n"
+        "আমি সেটিকে Voice/MP3 হিসেবে তৈরি করব।",
+        parse_mode="HTML"
+    )
+
+    logger.info(
+        "Language %s selected by user %s",
+        language,
+        user_id
     )
 
 
-# =========================
-# Voice Selection
-# =========================
+# =========================================================
+# VOICE SELECTION
+# =========================================================
 
 async def voice_selection(
     update: Update,
@@ -430,202 +414,231 @@ async def voice_selection(
 
     await query.answer()
 
-    user = query.from_user
+    user_id = query.from_user.id
 
-    voice = query.data.replace("voice:", "")
+    voice = query.data.replace(
+        "voice_",
+        ""
+    )
 
-    if voice not in ["female", "male"]:
-        return
-
-    save_user(user)
-
-    language, old_voice = get_settings(user.id)
-
-    set_voice(user.id, voice)
-
-    language_name = LANGUAGES[language]["name"]
+    set_voice(
+        user_id,
+        voice
+    )
 
     await query.edit_message_text(
-        "✅ Settings saved!\n\n"
-        f"🌐 Language: {language_name}\n"
-        f"🎤 Voice: {voice.title()}\n\n"
-        "এখন Text পাঠাও। আমি Voice তৈরি করে দেব।"
+        f"✅ Voice selected: {voice}\n\n"
+        "এখন আপনার Text পাঠান।"
+    )
+
+    logger.info(
+        "Voice %s selected by user %s",
+        voice,
+        user_id
     )
 
 
-# =========================
-# Change Language
-# =========================
-
-async def change_language(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
-
-    query = update.callback_query
-
-    await query.answer()
-
-    await query.edit_message_text(
-        "🌐 Select Language:",
-        reply_markup=language_keyboard()
-    )
-
-
-# =========================
-# Text → Voice
-# =========================
+# =========================================================
+# TEXT TO VOICE
+# =========================================================
 
 async def text_to_voice(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
 
+    if not update.message:
+        return
+
+    if not update.message.text:
+        return
+
     user = update.effective_user
 
-    text = update.message.text
-
-    if not text:
+    if not user:
         return
 
     save_user(user)
 
-    language, voice_type = get_settings(user.id)
+    text = update.message.text.strip()
 
-    voice = LANGUAGES[language]["voices"][voice_type]
+    if not text:
+        return
+
+    logger.info(
+        "Text received from user %s: %s",
+        user.id,
+        text[:100]
+    )
+
+    if len(text) > 3000:
+
+        await update.message.reply_text(
+            "❌ Text অনেক বড়।\n"
+            "সর্বোচ্চ 3000 characters পাঠান।"
+        )
+
+        return
+
+    language, voice = get_settings(
+        user.id
+    )
 
     await update.message.reply_text(
-        "🎙️ Voice তৈরি হচ্ছে..."
+        "⏳ Voice তৈরি হচ্ছে...\n"
+        "একটু অপেক্ষা করুন।"
+    )
+
+    language_map = {
+        "bn": "bn",
+        "en": "en",
+        "hi": "hi",
+        "ur": "ur",
+        "ar": "ar",
+    }
+
+    lang_code = language_map.get(
+        language,
+        "bn"
     )
 
     output_file = (
-        f"voice_{user.id}_"
-        f"{update.message.message_id}.mp3"
+        DOWNLOAD_DIR /
+        f"{user.id}_{update.message.message_id}.mp3"
     )
 
     try:
 
-        communicate = edge_tts.Communicate(
-            text,
-            voice
+        logger.info(
+            "Creating TTS for user %s, language=%s",
+            user.id,
+            lang_code
         )
 
-        await communicate.save(output_file)
+        tts = gTTS(
+            text=text,
+            lang=lang_code,
+            slow=False
+        )
 
-        with open(output_file, "rb") as audio:
+        tts.save(
+            str(output_file)
+        )
 
-            await update.message.reply_voice(
-                voice=audio
-            )
+        logger.info(
+            "MP3 created: %s",
+            output_file
+        )
 
-        keyboard = [
-            [
-                InlineKeyboardButton(
-                    "⬇️ Download MP3",
-                    callback_data=f"download:{output_file}"
-                )
-            ]
-        ]
+        await download_mp3(
+            update,
+            output_file
+        )
 
-        await update.message.reply_text(
-            "🎧 Voice তৈরি হয়েছে!\n\n"
-            "MP3 download করতে নিচের button চাপো:",
-            reply_markup=InlineKeyboardMarkup(keyboard)
+        logger.info(
+            "MP3 sent successfully to user %s",
+            user.id
         )
 
     except Exception as e:
 
-        print("Error:", e)
+        logger.exception(
+            "TTS Error"
+        )
 
         await update.message.reply_text(
-            "❌ Voice তৈরি করতে সমস্যা হয়েছে।"
-        )
-
-        if os.path.exists(output_file):
-            os.remove(output_file)
-
-
-# =========================
-# Download MP3
-# =========================
-
-async def download_mp3(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
-
-    query = update.callback_query
-
-    await query.answer()
-
-    file_name = query.data.replace(
-        "download:",
-        "",
-        1
-    )
-
-    if os.path.basename(file_name) != file_name:
-
-        await query.message.reply_text(
-            "❌ Invalid file."
-        )
-
-        return
-
-    if not os.path.exists(file_name):
-
-        await query.message.reply_text(
-            "❌ MP3 file আর available নেই।\n"
-            "আবার Text পাঠিয়ে Voice তৈরি করো।"
-        )
-
-        return
-
-    try:
-
-        with open(file_name, "rb") as audio:
-
-            await query.message.reply_document(
-                document=audio,
-                filename=file_name,
-                caption="⬇️ VoiceGen BD MP3"
-            )
-
-    except Exception as e:
-
-        print("Download Error:", e)
-
-        await query.message.reply_text(
-            "❌ MP3 পাঠাতে সমস্যা হয়েছে।"
+            "❌ Voice তৈরি করা যায়নি।\n\n"
+            "দয়া করে আবার চেষ্টা করুন।\n\n"
+            f"Error: {str(e)[:500]}"
         )
 
     finally:
 
-        if os.path.exists(file_name):
-            os.remove(file_name)
+        if output_file.exists():
+
+            try:
+                output_file.unlink()
+
+            except Exception:
+                logger.exception(
+                    "Could not delete temporary MP3"
+                )
 
 
-# =========================
-# Main
-# =========================
+# =========================================================
+# SEND MP3
+# =========================================================
+
+async def download_mp3(
+    update: Update,
+    file_path
+):
+
+    with open(
+        file_path,
+        "rb"
+    ) as audio_file:
+
+        await update.message.reply_audio(
+            audio=audio_file,
+            title="VoiceGen BD",
+            performer="VoiceGen BD Bot",
+            caption="🎙️ Generated by VoiceGen BD"
+        )
+
+
+# =========================================================
+# ERROR HANDLER
+# =========================================================
+
+async def error_handler(
+    update: object,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    logger.error(
+        "Exception while handling update:",
+        exc_info=context.error
+    )
+
+
+# =========================================================
+# MAIN
+# =========================================================
 
 def main():
 
-    # Start Render web server
-    threading.Thread(
-        target=run_web_server,
-        daemon=True
-    ).start()
+    print("====================================")
+    print("          VoiceGen BD Bot")
+    print("====================================")
+    print(f"Render PORT: {PORT}")
+    print("Starting health server...")
 
+    # Database
     init_db()
 
-    ensure_columns()
+    # Render health server
+    health_thread = threading.Thread(
+        target=start_health_server,
+        daemon=True
+    )
 
-    app = Application.builder().token(
-        BOT_TOKEN
-    ).build()
+    health_thread.start()
 
-    # /start
+    print("Health server started.")
+
+    # Telegram Application
+    app = (
+        Application
+        .builder()
+        .token(BOT_TOKEN)
+        .build()
+    )
+
+    # =====================================================
+    # HANDLERS
+    # =====================================================
+
     app.add_handler(
         CommandHandler(
             "start",
@@ -633,7 +646,6 @@ def main():
         )
     )
 
-    # /language
     app.add_handler(
         CommandHandler(
             "language",
@@ -641,7 +653,6 @@ def main():
         )
     )
 
-    # /voice
     app.add_handler(
         CommandHandler(
             "voice",
@@ -649,39 +660,27 @@ def main():
         )
     )
 
-    # Language selection
+    app.add_handler(
+        CommandHandler(
+            "changelanguage",
+            change_language
+        )
+    )
+
     app.add_handler(
         CallbackQueryHandler(
             language_selection,
-            pattern=r"^lang:"
+            pattern=r"^lang_"
         )
     )
 
-    # Voice selection
     app.add_handler(
         CallbackQueryHandler(
             voice_selection,
-            pattern=r"^voice:"
+            pattern=r"^voice_"
         )
     )
 
-    # Change language
-    app.add_handler(
-        CallbackQueryHandler(
-            change_language,
-            pattern=r"^change_language$"
-        )
-    )
-
-    # Download MP3
-    app.add_handler(
-        CallbackQueryHandler(
-            download_mp3,
-            pattern=r"^download:"
-        )
-    )
-
-    # Text → Voice
     app.add_handler(
         MessageHandler(
             filters.TEXT & ~filters.COMMAND,
@@ -689,10 +688,32 @@ def main():
         )
     )
 
+    app.add_error_handler(
+        error_handler
+    )
+
+    # =====================================================
+    # START
+    # =====================================================
+
+    print("====================================")
     print("VoiceGen BD Bot is running...")
+    print("Waiting for Telegram messages...")
+    print("====================================")
 
-    app.run_polling()
+    # Important:
+    # Remove old Telegram webhook before polling.
+    # This prevents webhook/polling conflict.
 
+    app.run_polling(
+        allowed_updates=Update.ALL_TYPES,
+        drop_pending_updates=True
+    )
+
+
+# =========================================================
+# RUN
+# =========================================================
 
 if __name__ == "__main__":
     main()
