@@ -1,0 +1,4 @@
+.env
+voicegen.db
+*.mp3
+__pycache__/
