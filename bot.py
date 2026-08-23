@@ -2,8 +2,6 @@ import os
 import sqlite3
 import logging
 import threading
-import asyncio
-import time
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -65,45 +63,53 @@ logger = logging.getLogger(__name__)
 
 VOICES = {
 
-    # -------------------------
+    # =====================================================
     # BANGLA
-    # -------------------------
+    # =====================================================
+
     "bn": {
-        "🇧🇩 বাংলা পুরুষ 1": "bn-BD-PradeepNeural",
-        "🇧🇩 বাংলা মহিলা 1": "bn-BD-NabanitaNeural",
+        "🇧🇩 বাংলা পুরুষ": "bn-BD-PradeepNeural",
+        "🇧🇩 বাংলা মহিলা": "bn-BD-NabanitaNeural",
     },
 
-    # -------------------------
+    # =====================================================
     # ENGLISH
-    # -------------------------
+    # =====================================================
+
     "en": {
-        "🇺🇸 English Male - Guy": "en-US-GuyNeural",
-        "🇺🇸 English Male - Christopher": "en-US-ChristopherNeural",
-        "🇺🇸 English Male - Eric": "en-US-EricNeural",
-        "🇺🇸 English Female - Jenny": "en-US-JennyNeural",
-        "🇺🇸 English Female - Aria": "en-US-AriaNeural",
-        "🇺🇸 English Female - Michelle": "en-US-MichelleNeural",
+        "🇺🇸 Male - Guy": "en-US-GuyNeural",
+        "🇺🇸 Male - Christopher": "en-US-ChristopherNeural",
+        "🇺🇸 Male - Eric": "en-US-EricNeural",
+        "🇺🇸 Male - Roger": "en-US-RogerNeural",
+
+        "🇺🇸 Female - Jenny": "en-US-JennyNeural",
+        "🇺🇸 Female - Aria": "en-US-AriaNeural",
+        "🇺🇸 Female - Michelle": "en-US-MichelleNeural",
+        "🇺🇸 Female - Ana": "en-US-AnaNeural",
     },
 
-    # -------------------------
+    # =====================================================
     # HINDI
-    # -------------------------
+    # =====================================================
+
     "hi": {
         "🇮🇳 हिन्दी Male - Madhur": "hi-IN-MadhurNeural",
         "🇮🇳 हिन्दी Female - Swara": "hi-IN-SwaraNeural",
     },
 
-    # -------------------------
+    # =====================================================
     # URDU
-    # -------------------------
+    # =====================================================
+
     "ur": {
         "🇵🇰 اردو Male - Asad": "ur-PK-AsadNeural",
         "🇵🇰 اردو Female - Uzma": "ur-PK-UzmaNeural",
     },
 
-    # -------------------------
+    # =====================================================
     # ARABIC
-    # -------------------------
+    # =====================================================
+
     "ar": {
         "🇸🇦 العربية Male - Hamed": "ar-SA-HamedNeural",
         "🇸🇦 العربية Female - Zariyah": "ar-SA-ZariyahNeural",
@@ -143,7 +149,13 @@ def save_user(user):
 
     cursor.execute("""
         INSERT OR IGNORE INTO users
-        (user_id, username, first_name, selected_language, selected_voice)
+        (
+            user_id,
+            username,
+            first_name,
+            selected_language,
+            selected_voice
+        )
         VALUES (?, ?, ?, ?, ?)
     """, (
         user.id,
@@ -155,7 +167,8 @@ def save_user(user):
 
     cursor.execute("""
         UPDATE users
-        SET username = ?, first_name = ?
+        SET username = ?,
+            first_name = ?
         WHERE user_id = ?
     """, (
         user.username,
@@ -195,8 +208,13 @@ def set_language(user_id, language):
 
     cursor = conn.cursor()
 
+    voices = VOICES.get(
+        language,
+        VOICES["bn"]
+    )
+
     default_voice = list(
-        VOICES.get(language, VOICES["bn"]).values()
+        voices.values()
     )[0]
 
     cursor.execute("""
@@ -368,7 +386,7 @@ async def start(
         text = (
             "🎙️ <b>Welcome to VoiceGen BD!</b>\n\n"
             "আপনি এখানে Text থেকে Voice/MP3 তৈরি করতে পারবেন।\n\n"
-            "🌐 <b>প্রথমে Language নির্বাচন করুন:</b>"
+            "🌐 <b>Language নির্বাচন করুন:</b>"
         )
 
         await update.message.reply_text(
@@ -494,8 +512,7 @@ async def language_selection(
 
         f"✅ Language selected: "
         f"<b>{selected_name}</b>\n\n"
-
-        "🎤 এখন আপনার Voice নির্বাচন করুন:",
+        "🎤 <b>এখন Voice নির্বাচন করুন:</b>",
 
         parse_mode="HTML",
 
@@ -619,9 +636,14 @@ async def text_to_voice(
             voice
         )
 
+        # =================================================
+        # SPEED = -30%
+        # =================================================
+
         communicate = edge_tts.Communicate(
             text=text,
-            voice=voice
+            voice=voice,
+            rate="-30%"
         )
 
         await communicate.save(
@@ -633,9 +655,9 @@ async def text_to_voice(
             output_file
         )
 
-        # ---------------------------------------------
-        # SEND AUDIO
-        # ---------------------------------------------
+        # =================================================
+        # SEND MP3
+        # =================================================
 
         with open(
             output_file,
@@ -652,8 +674,7 @@ async def text_to_voice(
 
                 caption=(
                     "🎙️ Voice তৈরি হয়েছে!\n\n"
-                    "⬇️ নিচের Download MP3 button "
-                    "চাপলে MP3 ফাইল পাবেন।"
+                    "⬇️ Download MP3 চাপুন।"
                 ),
 
                 reply_markup=InlineKeyboardMarkup([
@@ -661,7 +682,8 @@ async def text_to_voice(
                         InlineKeyboardButton(
                             "⬇️ Download MP3",
                             callback_data=(
-                                f"download:{user.id}:"
+                                f"download:"
+                                f"{user.id}:"
                                 f"{message_id}"
                             )
                         )
@@ -690,9 +712,15 @@ async def text_to_voice(
             parse_mode="HTML"
         )
 
+    finally:
+
+        # MP3 সাথে সাথে delete করছি না,
+        # যাতে Download button কাজ করতে পারে।
+        pass
+
 
 # =========================================================
-# DOWNLOAD MP3 BUTTON
+# DOWNLOAD MP3
 # =========================================================
 
 async def download_mp3(
@@ -716,7 +744,10 @@ async def download_mp3(
         user_id = int(parts[1])
         message_id = int(parts[2])
 
-        # Security check
+        # =================================================
+        # SECURITY CHECK
+        # =================================================
+
         if query.from_user.id != user_id:
 
             await query.answer(
@@ -727,259 +758,3 @@ async def download_mp3(
             return
 
         file_path = (
-            DOWNLOAD_DIR /
-            f"{user_id}_{message_id}.mp3"
-        )
-
-        if not file_path.exists():
-
-            await query.message.reply_text(
-                "❌ MP3 ফাইলটি আর পাওয়া যাচ্ছে না।\n"
-                "নতুন করে Text পাঠিয়ে Voice তৈরি করুন।"
-            )
-
-            return
-
-        with open(
-            file_path,
-            "rb"
-        ) as audio_file:
-
-            await query.message.reply_document(
-
-                document=audio_file,
-
-                filename="VoiceGen-BD.mp3",
-
-                caption=(
-                    "⬇️ আপনার MP3 Download করুন।\n"
-                    "🎙️ VoiceGen BD"
-                )
-
-            )
-
-        logger.info(
-            "MP3 downloaded by user %s",
-            user_id
-        )
-
-        # Delete after sending
-        try:
-            file_path.unlink()
-        except Exception:
-            pass
-
-    except Exception:
-
-        logger.exception(
-            "Download error"
-        )
-
-        await query.message.reply_text(
-            "❌ MP3 পাঠাতে সমস্যা হয়েছে।"
-        )
-
-
-# =========================================================
-# CLEAN OLD FILES
-# =========================================================
-
-def cleanup_old_files():
-
-    try:
-
-        now = time.time()
-
-        for file in DOWNLOAD_DIR.glob("*.mp3"):
-
-            try:
-
-                age = now - file.stat().st_mtime
-
-                # Delete files older than 2 hours
-                if age > 7200:
-
-                    file.unlink()
-
-            except Exception:
-                pass
-
-    except Exception:
-
-        logger.exception(
-            "Cleanup error"
-        )
-
-
-# =========================================================
-# ERROR HANDLER
-# =========================================================
-
-async def error_handler(
-    update: object,
-    context: ContextTypes.DEFAULT_TYPE
-):
-
-    logger.error(
-        "Exception while handling update:",
-        exc_info=context.error
-    )
-
-
-# =========================================================
-# MAIN
-# =========================================================
-
-def main():
-
-    print("====================================")
-    print("          VoiceGen BD Bot")
-    print("====================================")
-
-    print(
-        f"Render PORT: {PORT}"
-    )
-
-    # ---------------------------------------------
-    # DATABASE
-    # ---------------------------------------------
-
-    init_db()
-
-    # ---------------------------------------------
-    # CLEAN OLD MP3
-    # ---------------------------------------------
-
-    cleanup_old_files()
-
-    # ---------------------------------------------
-    # HEALTH SERVER
-    # ---------------------------------------------
-
-    health_thread = threading.Thread(
-        target=start_health_server,
-        daemon=True
-    )
-
-    health_thread.start()
-
-    print(
-        "Health server started."
-    )
-
-    # ---------------------------------------------
-    # TELEGRAM APPLICATION
-    # ---------------------------------------------
-
-    app = (
-        Application
-        .builder()
-        .token(BOT_TOKEN)
-        .build()
-    )
-
-    # ---------------------------------------------
-    # COMMANDS
-    # ---------------------------------------------
-
-    app.add_handler(
-        CommandHandler(
-            "start",
-            start
-        )
-    )
-
-    app.add_handler(
-        CommandHandler(
-            "language",
-            language_command
-        )
-    )
-
-    app.add_handler(
-        CommandHandler(
-            "voice",
-            voice_command
-        )
-    )
-
-    app.add_handler(
-        CommandHandler(
-            "changelanguage",
-            change_language
-        )
-    )
-
-    # ---------------------------------------------
-    # LANGUAGE BUTTON
-    # ---------------------------------------------
-
-    app.add_handler(
-        CallbackQueryHandler(
-            language_selection,
-            pattern=r"^lang_"
-        )
-    )
-
-    # ---------------------------------------------
-    # VOICE BUTTON
-    # ---------------------------------------------
-
-    app.add_handler(
-        CallbackQueryHandler(
-            voice_selection,
-            pattern=r"^voice:"
-        )
-    )
-
-    # ---------------------------------------------
-    # DOWNLOAD BUTTON
-    # ---------------------------------------------
-
-    app.add_handler(
-        CallbackQueryHandler(
-            download_mp3,
-            pattern=r"^download:"
-        )
-    )
-
-    # ---------------------------------------------
-    # TEXT MESSAGE
-    # ---------------------------------------------
-
-    app.add_handler(
-        MessageHandler(
-            filters.TEXT & ~filters.COMMAND,
-            text_to_voice
-        )
-    )
-
-    # ---------------------------------------------
-    # ERROR HANDLER
-    # ---------------------------------------------
-
-    app.add_error_handler(
-        error_handler
-    )
-
-    # ---------------------------------------------
-    # START BOT
-    # ---------------------------------------------
-
-    print("====================================")
-    print("VoiceGen BD Bot is running...")
-    print("Waiting for Telegram messages...")
-    print("====================================")
-
-    app.run_polling(
-        allowed_updates=Update.ALL_TYPES,
-        drop_pending_updates=True
-    )
-
-
-# =========================================================
-# RUN
-# =========================================================
-
-if __name__ == "__main__":
-    main()
