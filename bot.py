@@ -69,15 +69,11 @@ WEBHOOK_SECRET = os.getenv(
 # Overall voice speed
 VOICE_RATE = "-30%"
 
-# ---------------------------------------------------------
-# Word Pause
-# ---------------------------------------------------------
+# Word-এর মাঝে ছোট natural pause
+WORD_PAUSE_MS = 45
 
-# প্রতিটি word-এর মাঝে pause
-WORD_PAUSE_MS = 180
-
-# Sentence শেষ হওয়ার পরে pause
-SENTENCE_PAUSE_MS = 350
+# Sentence শেষ হওয়ার পরে natural pause
+SENTENCE_PAUSE_MS = 160
 
 
 # =========================================================
@@ -96,7 +92,6 @@ logger = logging.getLogger("VoiceGenBD")
 # USER SETTINGS
 # =========================================================
 
-# Render restart/redeploy হলে settings reset হবে।
 user_settings = {}
 
 
@@ -115,14 +110,12 @@ def get_settings(user_id: int):
 def set_language(user_id: int, language: str):
 
     settings = get_settings(user_id)
-
     settings["language"] = language
 
 
 def set_voice(user_id: int, voice: str):
 
     settings = get_settings(user_id)
-
     settings["voice"] = voice
 
 
@@ -412,7 +405,6 @@ def is_valid_voice(
         ):
 
             if voice_id == voice:
-
                 return True
 
     return False
@@ -453,9 +445,7 @@ def main_menu_keyboard():
         ],
     ]
 
-    return InlineKeyboardMarkup(
-        keyboard
-    )
+    return InlineKeyboardMarkup(keyboard)
 
 
 # =========================================================
@@ -505,18 +495,14 @@ def language_keyboard():
         ],
     ]
 
-    return InlineKeyboardMarkup(
-        keyboard
-    )
+    return InlineKeyboardMarkup(keyboard)
 
 
 # =========================================================
 # VOICE KEYBOARD
 # =========================================================
 
-def voice_keyboard(
-    language: str,
-):
+def voice_keyboard(language: str):
 
     voices = VOICES.get(
         language,
@@ -525,139 +511,78 @@ def voice_keyboard(
 
     keyboard = []
 
-    # -----------------------------------------------------
-    # Male
-    # -----------------------------------------------------
-
     keyboard.append([
-
         InlineKeyboardButton(
             "👨 Male Voices",
             callback_data="voice_title_male",
         )
-
     ])
 
-    for name, voice_id in voices.get(
-        "male",
-        [],
-    ):
+    for name, voice_id in voices.get("male", []):
 
         keyboard.append([
-
             InlineKeyboardButton(
                 name,
                 callback_data=f"voice_select|{voice_id}",
             )
-
         ])
 
-    # -----------------------------------------------------
-    # Female
-    # -----------------------------------------------------
-
     keyboard.append([
-
         InlineKeyboardButton(
             "👩 Female Voices",
             callback_data="voice_title_female",
         )
-
     ])
 
-    for name, voice_id in voices.get(
-        "female",
-        [],
-    ):
+    for name, voice_id in voices.get("female", []):
 
         keyboard.append([
-
             InlineKeyboardButton(
                 name,
                 callback_data=f"voice_select|{voice_id}",
             )
-
         ])
 
-    # -----------------------------------------------------
-    # Young / Cute
-    # -----------------------------------------------------
-
     keyboard.append([
-
         InlineKeyboardButton(
             "🧒 Young / Cute Voices",
             callback_data="voice_title_young",
         )
-
     ])
 
-    for name, voice_id in voices.get(
-        "young",
-        [],
-    ):
+    for name, voice_id in voices.get("young", []):
 
         keyboard.append([
-
             InlineKeyboardButton(
                 name,
                 callback_data=f"voice_select|{voice_id}",
             )
-
         ])
 
-    # -----------------------------------------------------
-    # Back
-    # -----------------------------------------------------
-
     keyboard.append([
-
         InlineKeyboardButton(
             "🔙 Back",
             callback_data="menu_start",
         )
-
     ])
 
-    return InlineKeyboardMarkup(
-        keyboard
-    )
+    return InlineKeyboardMarkup(keyboard)
 
 
 # =========================================================
 # TEXT PROCESSING
 # =========================================================
 
-def split_text_into_words(
-    text: str,
-):
+def split_text_into_words(text: str):
 
-    """
-    Text-কে word অনুযায়ী ভাগ করে।
-
-    Example:
-
-    আমি ভালো আছি।
-
-    Result:
-
-    আমি
-    ভালো
-    আছি।
-    """
-
-    parts = re.findall(
+    return re.findall(
         r"\S+",
         text,
         flags=re.UNICODE,
     )
 
-    return parts
 
-
-def has_sentence_end(
-    word: str,
-):
+def has_sentence_end(word: str):
 
     return bool(
         re.search(
@@ -678,27 +603,7 @@ async def create_word_pause_audio(
     output_file: str,
 ):
 
-    """
-    প্রতিটি word আলাদা করে Edge TTS-এ convert করে।
-
-    তারপর:
-
-    Word 1
-    ↓
-    Pause
-    ↓
-    Word 2
-    ↓
-    Pause
-    ↓
-    Word 3
-
-    এভাবে final MP3 তৈরি করে।
-    """
-
-    words = split_text_into_words(
-        text
-    )
+    words = split_text_into_words(text)
 
     if not words:
 
@@ -712,13 +617,7 @@ async def create_word_pause_audio(
 
     try:
 
-        for index, word in enumerate(
-            words
-        ):
-
-            # -------------------------------------------------
-            # Temporary word MP3
-            # -------------------------------------------------
+        for index, word in enumerate(words):
 
             word_file = tempfile.NamedTemporaryFile(
                 suffix=".mp3",
@@ -726,12 +625,9 @@ async def create_word_pause_audio(
             )
 
             word_path = word_file.name
-
             word_file.close()
 
-            temp_files.append(
-                word_path
-            )
+            temp_files.append(word_path)
 
             logger.info(
                 "Generating word %s/%s: %s",
@@ -740,27 +636,15 @@ async def create_word_pause_audio(
                 word,
             )
 
-            # -------------------------------------------------
-            # Edge TTS
-            # -------------------------------------------------
-
             communicate = edge_tts.Communicate(
                 text=word,
                 voice=voice,
                 rate=VOICE_RATE,
             )
 
-            await communicate.save(
-                word_path
-            )
+            await communicate.save(word_path)
 
-            # -------------------------------------------------
-            # Check word file
-            # -------------------------------------------------
-
-            word_file_path = Path(
-                word_path
-            )
+            word_file_path = Path(word_path)
 
             if not word_file_path.exists():
 
@@ -774,30 +658,16 @@ async def create_word_pause_audio(
                     f"Word audio empty হয়েছে: {word}"
                 )
 
-            # -------------------------------------------------
-            # Load MP3
-            # -------------------------------------------------
-
             word_audio = AudioSegment.from_file(
                 word_path,
                 format="mp3",
             )
 
-            # -------------------------------------------------
-            # Add word audio
-            # -------------------------------------------------
-
             combined_audio += word_audio
-
-            # -------------------------------------------------
-            # Add pause
-            # -------------------------------------------------
 
             if index < len(words) - 1:
 
-                if has_sentence_end(
-                    word
-                ):
+                if has_sentence_end(word):
 
                     pause = AudioSegment.silent(
                         duration=SENTENCE_PAUSE_MS
@@ -811,10 +681,6 @@ async def create_word_pause_audio(
 
                 combined_audio += pause
 
-        # -----------------------------------------------------
-        # Export final MP3
-        # -----------------------------------------------------
-
         combined_audio.export(
             output_file,
             format="mp3",
@@ -827,20 +693,13 @@ async def create_word_pause_audio(
 
     finally:
 
-        # -----------------------------------------------------
-        # Delete individual word MP3 files
-        # -----------------------------------------------------
-
         for temp_file in temp_files:
 
             try:
 
-                path = Path(
-                    temp_file
-                )
+                path = Path(temp_file)
 
                 if path.exists():
-
                     path.unlink()
 
             except Exception:
@@ -866,30 +725,21 @@ async def start(
         if not user:
             return
 
-        get_settings(
-            user.id
-        )
+        get_settings(user.id)
 
         text = (
-
             "🎙️ <b>Welcome to VoiceGen BD!</b>\n\n"
-
             "আপনি Text থেকে Voice / MP3 তৈরি করতে পারবেন।\n\n"
-
             "🌐 Language নির্বাচন করুন।\n"
             "🎤 Male / Female Voice নির্বাচন করুন।\n"
             "🧒 Young / Cute Voice-ও available।\n\n"
-
             "তারপর আপনার Text পাঠান।\n\n"
-
             "👨 2 Male Voice\n"
             "👩 2 Female Voice\n"
             "🧒 2 Young/Cute Voice\n"
             "⏸️ Word-এর মাঝে Pause\n\n"
-
             "🐢 Speed: <b>-30%</b>\n"
             "🎵 Output: <b>MP3</b>"
-
         )
 
         if update.message:
@@ -907,11 +757,6 @@ async def start(
                 parse_mode="HTML",
                 reply_markup=main_menu_keyboard(),
             )
-
-        logger.info(
-            "START received from user %s",
-            user.id,
-        )
 
     except Exception:
 
@@ -933,13 +778,9 @@ async def language_command(
         return
 
     await update.message.reply_text(
-
         "🌐 <b>Language নির্বাচন করুন:</b>",
-
         parse_mode="HTML",
-
         reply_markup=language_keyboard(),
-
     )
 
 
@@ -960,27 +801,17 @@ async def voice_command(
     if not user:
         return
 
-    settings = get_settings(
-        user.id
-    )
+    settings = get_settings(user.id)
 
-    language = settings[
-        "language"
-    ]
+    language = settings["language"]
 
     await update.message.reply_text(
-
         "🎤 <b>আপনার Voice নির্বাচন করুন:</b>\n\n"
         "👨 2 Male\n"
         "👩 2 Female\n"
         "🧒 2 Young/Cute",
-
         parse_mode="HTML",
-
-        reply_markup=voice_keyboard(
-            language
-        ),
-
+        reply_markup=voice_keyboard(language),
     )
 
 
@@ -997,13 +828,9 @@ async def change_language(
         return
 
     await update.message.reply_text(
-
         "🌐 <b>Choose a language:</b>",
-
         parse_mode="HTML",
-
         reply_markup=language_keyboard(),
-
     )
 
 
@@ -1040,9 +867,7 @@ async def help_command(
         "🎵 Output: MP3",
 
         parse_mode="HTML",
-
         reply_markup=main_menu_keyboard(),
-
     )
 
 
@@ -1077,79 +902,39 @@ async def text_to_voice(
         text[:100],
     )
 
-    # -----------------------------------------------------
-    # Character limit
-    # -----------------------------------------------------
-
     if len(text) > 3000:
 
         await update.message.reply_text(
-
             "❌ Text অনেক বড়।\n\n"
             "সর্বোচ্চ <b>3000 characters</b> পাঠান।",
-
             parse_mode="HTML",
-
             reply_markup=main_menu_keyboard(),
-
         )
 
         return
 
-    # -----------------------------------------------------
-    # Settings
-    # -----------------------------------------------------
+    settings = get_settings(user.id)
 
-    settings = get_settings(
-        user.id
-    )
+    language = settings["language"]
+    voice = settings["voice"]
 
-    language = settings[
-        "language"
-    ]
+    if not is_valid_voice(language, voice):
 
-    voice = settings[
-        "voice"
-    ]
-
-    # -----------------------------------------------------
-    # Validate voice
-    # -----------------------------------------------------
-
-    if not is_valid_voice(
-        language,
-        voice,
-    ):
-
-        voice = VOICES[
-            language
-        ][
-            "male"
-        ][
-            0
-        ][
-            1
-        ]
+        voice = VOICES[language]["male"][0][1]
 
         set_voice(
             user.id,
             voice,
         )
 
-    # -----------------------------------------------------
-    # Processing message
-    # -----------------------------------------------------
-
     processing_message = await update.message.reply_text(
 
         "⏳ <b>Voice তৈরি হচ্ছে...</b>\n\n"
-
         "🎤 Voice প্রস্তুত করা হচ্ছে...\n"
         "⏸️ Word-এর মাঝে pause যোগ করা হচ্ছে...\n"
         "🐢 Speed: -30%",
 
         parse_mode="HTML",
-
     )
 
     output_file = None
@@ -1164,40 +949,21 @@ async def text_to_voice(
             voice,
         )
 
-        # -------------------------------------------------
-        # Temporary final MP3
-        # -------------------------------------------------
-
         temp_file = tempfile.NamedTemporaryFile(
             suffix=".mp3",
             delete=False,
         )
 
         output_file = temp_file.name
-
         temp_file.close()
 
-        # -------------------------------------------------
-        # Create final audio
-        # -------------------------------------------------
-
         await create_word_pause_audio(
-
             text=text,
-
             voice=voice,
-
             output_file=output_file,
-
         )
 
-        # -------------------------------------------------
-        # Check final file
-        # -------------------------------------------------
-
-        output_path = Path(
-            output_file
-        )
+        output_path = Path(output_file)
 
         if not output_path.exists():
 
@@ -1211,15 +977,6 @@ async def text_to_voice(
                 "Final MP3 file empty হয়েছে।"
             )
 
-        logger.info(
-            "Final MP3 created successfully: %s",
-            output_file,
-        )
-
-        # -------------------------------------------------
-        # Delete processing message
-        # -------------------------------------------------
-
         try:
 
             await processing_message.delete()
@@ -1228,14 +985,7 @@ async def text_to_voice(
 
             pass
 
-        # -------------------------------------------------
-        # Send MP3
-        # -------------------------------------------------
-
-        with open(
-            output_file,
-            "rb",
-        ) as audio_file:
+        with open(output_file, "rb") as audio_file:
 
             await update.message.reply_audio(
 
@@ -1246,21 +996,15 @@ async def text_to_voice(
                 performer="VoiceGen BD",
 
                 caption=(
-
                     "🎙️ <b>VoiceGen BD</b>\n"
-
                     "🐢 Speed: -30%\n"
-
                     f"⏸️ Word pause: {WORD_PAUSE_MS}ms\n"
-
                     f"⏸️ Sentence pause: {SENTENCE_PAUSE_MS}ms"
-
                 ),
 
                 parse_mode="HTML",
 
                 reply_markup=main_menu_keyboard(),
-
             )
 
         logger.info(
@@ -1270,22 +1014,18 @@ async def text_to_voice(
 
     except Exception as e:
 
-        logger.exception(
-            "TTS Error"
-        )
+        logger.exception("TTS Error")
 
         try:
 
             await processing_message.edit_text(
 
                 "❌ <b>Voice তৈরি করা যায়নি।</b>\n\n"
-
                 "দয়া করে আবার চেষ্টা করুন।",
 
                 parse_mode="HTML",
 
                 reply_markup=main_menu_keyboard(),
-
             )
 
         except Exception:
@@ -1293,12 +1033,9 @@ async def text_to_voice(
             try:
 
                 await update.message.reply_text(
-
                     "❌ Voice তৈরি করা যায়নি।\n\n"
                     "দয়া করে আবার চেষ্টা করুন।",
-
                     reply_markup=main_menu_keyboard(),
-
                 )
 
             except Exception:
@@ -1312,26 +1049,15 @@ async def text_to_voice(
 
     finally:
 
-        # -------------------------------------------------
-        # Delete final temporary MP3
-        # -------------------------------------------------
-
         if output_file:
 
             try:
 
-                path = Path(
-                    output_file
-                )
+                path = Path(output_file)
 
                 if path.exists():
 
                     path.unlink()
-
-                    logger.info(
-                        "Temporary final MP3 deleted: %s",
-                        output_file,
-                    )
 
             except Exception:
 
@@ -1360,12 +1086,6 @@ async def callback_handler(
 
     data = query.data or ""
 
-    logger.info(
-        "Callback received: user=%s data=%s",
-        user_id,
-        data,
-    )
-
     # =====================================================
     # MAIN MENU
     # =====================================================
@@ -1392,7 +1112,6 @@ async def callback_handler(
             parse_mode="HTML",
 
             reply_markup=language_keyboard(),
-
         )
 
         return
@@ -1403,28 +1122,20 @@ async def callback_handler(
 
     if data == "menu_voice":
 
-        settings = get_settings(
-            user_id
-        )
+        settings = get_settings(user_id)
 
-        language = settings[
-            "language"
-        ]
+        language = settings["language"]
 
         await query.edit_message_text(
 
             "🎤 <b>Voice নির্বাচন করুন:</b>\n\n"
-
             "👨 2 Male\n"
             "👩 2 Female\n"
             "🧒 2 Young/Cute",
 
             parse_mode="HTML",
 
-            reply_markup=voice_keyboard(
-                language
-            ),
-
+            reply_markup=voice_keyboard(language),
         )
 
         return
@@ -1446,7 +1157,7 @@ async def callback_handler(
 
             "👨 2 Male Voice\n"
             "👩 2 Female Voice\n"
-            "🧒 2 Young/Cute Voice\n"
+            "🧒 2 Young/Cute Voice\n\n"
 
             "⏸️ Word-এর মাঝে pause\n"
             f"⏱️ Word pause: {WORD_PAUSE_MS}ms\n"
@@ -1458,7 +1169,6 @@ async def callback_handler(
             parse_mode="HTML",
 
             reply_markup=main_menu_keyboard(),
-
         )
 
         return
@@ -1467,9 +1177,7 @@ async def callback_handler(
     # LANGUAGE SELECTION
     # =====================================================
 
-    if data.startswith(
-        "lang_"
-    ):
+    if data.startswith("lang_"):
 
         language = data.replace(
             "lang_",
@@ -1491,7 +1199,6 @@ async def callback_handler(
             language,
         )
 
-        # Default male voice
         default_voice = VOICES[
             language
         ][
@@ -1516,21 +1223,11 @@ async def callback_handler(
 
             f"✅ <b>Language selected:</b> "
             f"{selected_name}\n\n"
-
             "এখন আপনার পছন্দের Voice নির্বাচন করুন।",
 
             parse_mode="HTML",
 
-            reply_markup=voice_keyboard(
-                language
-            ),
-
-        )
-
-        logger.info(
-            "Language %s selected by user %s",
-            language,
-            user_id,
+            reply_markup=voice_keyboard(language),
         )
 
         return
@@ -1539,26 +1236,16 @@ async def callback_handler(
     # VOICE SELECT
     # =====================================================
 
-    if data.startswith(
-        "voice_select|"
-    ):
+    if data.startswith("voice_select|"):
 
         voice = data.split(
             "|",
             1,
         )[1]
 
-        settings = get_settings(
-            user_id
-        )
+        settings = get_settings(user_id)
 
-        language = settings[
-            "language"
-        ]
-
-        # -------------------------------------------------
-        # Validate
-        # -------------------------------------------------
+        language = settings["language"]
 
         if not is_valid_voice(
             language,
@@ -1568,29 +1255,14 @@ async def callback_handler(
             await query.edit_message_text(
 
                 "❌ এই Voice বর্তমানে available নয়।\n\n"
-
                 "দয়া করে অন্য Voice নির্বাচন করুন।",
 
                 parse_mode="HTML",
 
-                reply_markup=voice_keyboard(
-                    language
-                ),
-
-            )
-
-            logger.warning(
-                "Invalid voice selected: "
-                "user=%s voice=%s",
-                user_id,
-                voice,
+                reply_markup=voice_keyboard(language),
             )
 
             return
-
-        # -------------------------------------------------
-        # Save
-        # -------------------------------------------------
 
         set_voice(
             user_id,
@@ -1610,68 +1282,40 @@ async def callback_handler(
             parse_mode="HTML",
 
             reply_markup=main_menu_keyboard(),
-
-        )
-
-        logger.info(
-            "Voice %s selected by user %s",
-            voice,
-            user_id,
         )
 
         return
 
     # =====================================================
-    # MALE CATEGORY
+    # CATEGORY BUTTONS
     # =====================================================
 
     if data == "voice_title_male":
 
         await query.answer(
-
             "👨 নিচে Male voices দেওয়া আছে।",
-
             show_alert=False,
-
         )
 
         return
-
-    # =====================================================
-    # FEMALE CATEGORY
-    # =====================================================
 
     if data == "voice_title_female":
 
         await query.answer(
-
             "👩 নিচে Female voices দেওয়া আছে।",
-
             show_alert=False,
-
         )
 
         return
-
-    # =====================================================
-    # YOUNG CATEGORY
-    # =====================================================
 
     if data == "voice_title_young":
 
         await query.answer(
-
             "🧒 নিচে Young/Cute voices দেওয়া আছে।",
-
             show_alert=False,
-
         )
 
         return
-
-    # =====================================================
-    # UNKNOWN CALLBACK
-    # =====================================================
 
     logger.warning(
         "Unknown callback data: %s",
@@ -1713,7 +1357,6 @@ async def post_init(
             "help",
             "ℹ️ Help",
         ),
-
     ])
 
     logger.info(
@@ -1740,16 +1383,11 @@ async def error_handler(
 # HEALTH ENDPOINT
 # =========================================================
 
-async def health(
-    request,
-):
+async def health(request):
 
     return web.Response(
-
         text="VoiceGen BD Bot is running!",
-
         status=200,
-
     )
 
 
@@ -1757,22 +1395,13 @@ async def health(
 # TELEGRAM WEBHOOK
 # =========================================================
 
-async def telegram_webhook(
-    request,
-):
-
-    # -----------------------------------------------------
-    # Secret verification
-    # -----------------------------------------------------
+async def telegram_webhook(request):
 
     if WEBHOOK_SECRET:
 
         incoming_secret = request.headers.get(
-
             "X-Telegram-Bot-Api-Secret-Token",
-
             "",
-
         )
 
         if incoming_secret != WEBHOOK_SECRET:
@@ -1782,16 +1411,9 @@ async def telegram_webhook(
             )
 
             return web.Response(
-
                 text="Unauthorized",
-
                 status=401,
-
             )
-
-    # -----------------------------------------------------
-    # Read JSON
-    # -----------------------------------------------------
 
     try:
 
@@ -1804,16 +1426,9 @@ async def telegram_webhook(
         )
 
         return web.Response(
-
             text="Bad Request",
-
             status=400,
-
         )
-
-    # -----------------------------------------------------
-    # Convert to Update
-    # -----------------------------------------------------
 
     try:
 
@@ -1822,11 +1437,8 @@ async def telegram_webhook(
         ]
 
         update = Update.de_json(
-
             data,
-
             application.bot,
-
         )
 
     except Exception:
@@ -1836,24 +1448,15 @@ async def telegram_webhook(
         )
 
         return web.Response(
-
             text="Bad Request",
-
             status=400,
-
         )
-
-    # -----------------------------------------------------
-    # Queue update
-    # -----------------------------------------------------
 
     try:
 
         await request.app[
             "telegram_application"
-        ].update_queue.put(
-            update
-        )
+        ].update_queue.put(update)
 
     except Exception:
 
@@ -1862,19 +1465,13 @@ async def telegram_webhook(
         )
 
         return web.Response(
-
             text="Server Error",
-
             status=500,
-
         )
 
     return web.Response(
-
         text="OK",
-
         status=200,
-
     )
 
 
@@ -1892,22 +1489,14 @@ async def create_web_app(
         "telegram_application"
     ] = application
 
-    # Health
     web_app.router.add_get(
-
         "/",
-
         health,
-
     )
 
-    # Telegram webhook
     web_app.router.add_post(
-
         WEBHOOK_PATH,
-
         telegram_webhook,
-
     )
 
     return web_app
@@ -1964,12 +1553,10 @@ async def run_bot():
     print()
 
     # =====================================================
-    # Check FFmpeg
+    # CHECK FFMPEG
     # =====================================================
 
-    ffmpeg_path = shutil.which(
-        "ffmpeg"
-    )
+    ffmpeg_path = shutil.which("ffmpeg")
 
     if ffmpeg_path:
 
@@ -1986,107 +1573,79 @@ async def run_bot():
         )
 
     # =====================================================
-    # Telegram Application
+    # TELEGRAM APPLICATION
     # =====================================================
 
     application = (
-
         Application
-
         .builder()
-
-        .token(
-            BOT_TOKEN
-        )
-
-        .post_init(
-            post_init
-        )
-
+        .token(BOT_TOKEN)
+        .post_init(post_init)
         .build()
-
     )
 
     # =====================================================
-    # Commands
+    # COMMANDS
     # =====================================================
 
     application.add_handler(
-
         CommandHandler(
             "start",
             start,
         )
-
     )
 
     application.add_handler(
-
         CommandHandler(
             "language",
             language_command,
         )
-
     )
 
     application.add_handler(
-
         CommandHandler(
             "voice",
             voice_command,
         )
-
     )
 
     application.add_handler(
-
         CommandHandler(
             "changelanguage",
             change_language,
         )
-
     )
 
     application.add_handler(
-
         CommandHandler(
             "help",
             help_command,
         )
-
     )
 
     # =====================================================
-    # Callback buttons
+    # CALLBACK BUTTONS
     # =====================================================
 
     application.add_handler(
-
         CallbackQueryHandler(
             callback_handler,
         )
-
     )
 
     # =====================================================
-    # Text messages
+    # TEXT MESSAGES
     # =====================================================
 
     application.add_handler(
-
         MessageHandler(
-
-            filters.TEXT
-            & ~filters.COMMAND,
-
+            filters.TEXT & ~filters.COMMAND,
             text_to_voice,
-
         )
-
     )
 
     # =====================================================
-    # Error handler
+    # ERROR HANDLER
     # =====================================================
 
     application.add_error_handler(
@@ -2094,27 +1653,25 @@ async def run_bot():
     )
 
     # =====================================================
-    # Initialize
+    # INITIALIZE
     # =====================================================
 
     await application.initialize()
 
     # =====================================================
-    # Start Telegram application
+    # START TELEGRAM APPLICATION
     # =====================================================
 
     await application.start()
 
     # =====================================================
-    # Delete old webhook
+    # DELETE OLD WEBHOOK
     # =====================================================
 
     try:
 
         await application.bot.delete_webhook(
-
             drop_pending_updates=False,
-
         )
 
         logger.info(
@@ -2128,7 +1685,7 @@ async def run_bot():
         )
 
     # =====================================================
-    # Set new webhook
+    # SET NEW WEBHOOK
     # =====================================================
 
     webhook_kwargs = {
@@ -2140,7 +1697,6 @@ async def run_bot():
         "drop_pending_updates": False,
 
         "max_connections": 40,
-
     }
 
     if WEBHOOK_SECRET:
@@ -2150,21 +1706,16 @@ async def run_bot():
         ] = WEBHOOK_SECRET
 
     await application.bot.set_webhook(
-
         **webhook_kwargs
-
     )
 
     logger.info(
-
         "Telegram webhook set successfully: %s",
-
         FULL_WEBHOOK_URL,
-
     )
 
     # =====================================================
-    # Webhook information
+    # WEBHOOK INFORMATION
     # =====================================================
 
     try:
@@ -2174,13 +1725,9 @@ async def run_bot():
         )
 
         logger.info(
-
             "Webhook info: url=%s pending=%s",
-
             webhook_info.url,
-
             webhook_info.pending_update_count,
-
         )
 
     except Exception:
@@ -2190,7 +1737,7 @@ async def run_bot():
         )
 
     # =====================================================
-    # Create web application
+    # CREATE WEB APPLICATION
     # =====================================================
 
     web_app = await create_web_app(
@@ -2198,7 +1745,7 @@ async def run_bot():
     )
 
     # =====================================================
-    # Start HTTP server
+    # START HTTP SERVER
     # =====================================================
 
     runner = web.AppRunner(
@@ -2208,13 +1755,9 @@ async def run_bot():
     await runner.setup()
 
     site = web.TCPSite(
-
         runner,
-
         "0.0.0.0",
-
         PORT,
-
     )
 
     await site.start()
@@ -2256,7 +1799,7 @@ async def run_bot():
     print()
 
     # =====================================================
-    # Keep server running
+    # KEEP SERVER RUNNING
     # =====================================================
 
     try:
@@ -2269,16 +1812,10 @@ async def run_bot():
             "Stopping VoiceGen BD Bot..."
         )
 
-        # -------------------------------------------------
-        # Delete webhook
-        # -------------------------------------------------
-
         try:
 
             await application.bot.delete_webhook(
-
                 drop_pending_updates=False,
-
             )
 
         except Exception:
@@ -2286,10 +1823,6 @@ async def run_bot():
             logger.exception(
                 "Could not delete webhook."
             )
-
-        # -------------------------------------------------
-        # Stop Telegram application
-        # -------------------------------------------------
 
         try:
 
@@ -2301,10 +1834,6 @@ async def run_bot():
                 "Could not stop Telegram application."
             )
 
-        # -------------------------------------------------
-        # Shutdown Telegram application
-        # -------------------------------------------------
-
         try:
 
             await application.shutdown()
@@ -2314,10 +1843,6 @@ async def run_bot():
             logger.exception(
                 "Could not shutdown Telegram application."
             )
-
-        # -------------------------------------------------
-        # Cleanup HTTP server
-        # -------------------------------------------------
 
         try:
 
