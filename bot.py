@@ -54,7 +54,7 @@ WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "").strip()
 
 VOICE_RATE = "-30%"
 
-# Shorts-style pause
+# Shorts-style
 WORD_PAUSE_MS = 0
 SENTENCE_PAUSE_MS = 0
 
