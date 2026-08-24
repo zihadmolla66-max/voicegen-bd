@@ -1,14 +1,26 @@
 import os
 import asyncio
-import logging
 import tempfile
 import subprocess
-import json
+import re
 from pathlib import Path
 
-import aiohttp
-from aiohttp import web
 import edge_tts
+import imageio_ffmpeg
+
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+)
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    CallbackQueryHandler,
+    MessageHandler,
+    ContextTypes,
+    filters,
+)
 
 
 # ============================================================
@@ -17,736 +29,689 @@ import edge_tts
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-if not BOT_TOKEN:
-    raise RuntimeError("BOT_TOKEN environment variable is missing.")
+WEBHOOK_URL = os.getenv("WEBHOOK_URL", "").strip()
+WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "").strip()
 
 PORT = int(os.getenv("PORT", "10000"))
 
-RENDER_URL = os.getenv(
-    "RENDER_URL",
-    "https://voicegen-bd.onrender.com"
-).rstrip("/")
+if not BOT_TOKEN:
+    raise RuntimeError("BOT_TOKEN environment variable is missing.")
 
-WEBHOOK_PATH = "/telegram"
-WEBHOOK_URL = RENDER_URL + WEBHOOK_PATH
 
-# User settings
-SPEED_RATE = "-30%"
+# ============================================================
+# DEFAULT SETTINGS
+# ============================================================
+
+DEFAULT_LANGUAGE = "bn"
+DEFAULT_VOICE_TYPE = "male"
+
+# Word-by-word pause permanently OFF
 WORD_PAUSE = False
 
-# Temporary directory
-TEMP_DIR = Path(tempfile.gettempdir()) / "voicegen_bd"
-TEMP_DIR.mkdir(parents=True, exist_ok=True)
+DEFAULT_SPEED = -30
 
 
 # ============================================================
-# LOGGING
+# LANGUAGES
 # ============================================================
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - VoiceGenBD - %(levelname)s - %(message)s"
-)
-
-logger = logging.getLogger("VoiceGenBD")
+LANGUAGES = {
+    "bn": "🇧🇩 বাংলা",
+    "en": "🇺🇸 English",
+}
 
 
 # ============================================================
-# TELEGRAM API
+# VOICES
 # ============================================================
 
-TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
+VOICES = {
+    "bn": {
 
+        "male": {
+            "name": "👨 Male",
+            "voice": "bn-BD-PradeepNeural",
+            "pitch": "+0Hz",
+            "rate_adjust": 0,
+        },
 
-async def telegram_api(method, data=None, files=None):
+        "female": {
+            "name": "👩 Female",
+            "voice": "bn-BD-NabanitaNeural",
+            "pitch": "+0Hz",
+            "rate_adjust": 0,
+        },
 
-    timeout = aiohttp.ClientTimeout(total=180)
+        "kid_male": {
+            "name": "👦 Kids Male",
+            "voice": "bn-BD-PradeepNeural",
+            "pitch": "+35Hz",
+            "rate_adjust": 10,
+        },
 
-    async with aiohttp.ClientSession(timeout=timeout) as session:
+        "kid_female": {
+            "name": "👧 Kids Female",
+            "voice": "bn-BD-NabanitaNeural",
+            "pitch": "+35Hz",
+            "rate_adjust": 10,
+        },
+    },
 
-        if files:
+    "en": {
 
-            form = aiohttp.FormData()
+        "male": {
+            "name": "👨 Male",
+            "voice": "en-US-GuyNeural",
+            "pitch": "+0Hz",
+            "rate_adjust": 0,
+        },
 
-            if data:
-                for key, value in data.items():
-                    form.add_field(key, str(value))
+        "female": {
+            "name": "👩 Female",
+            "voice": "en-US-JennyNeural",
+            "pitch": "+0Hz",
+            "rate_adjust": 0,
+        },
 
-            opened_files = []
+        "kid_male": {
+            "name": "👦 Kids Male",
+            "voice": "en-US-GuyNeural",
+            "pitch": "+35Hz",
+            "rate_adjust": 10,
+        },
 
-            try:
-
-                for key, file_info in files.items():
-
-                    filename, file_path, content_type = file_info
-
-                    file_handle = open(file_path, "rb")
-                    opened_files.append(file_handle)
-
-                    form.add_field(
-                        key,
-                        file_handle,
-                        filename=filename,
-                        content_type=content_type
-                    )
-
-                async with session.post(
-                    f"{TELEGRAM_API}/{method}",
-                    data=form
-                ) as response:
-
-                    return await response.json()
-
-            finally:
-
-                for file_handle in opened_files:
-
-                    try:
-                        file_handle.close()
-                    except Exception:
-                        pass
-
-        else:
-
-            async with session.post(
-                f"{TELEGRAM_API}/{method}",
-                data=data or {}
-            ) as response:
-
-                return await response.json()
-
-
-# ============================================================
-# TELEGRAM SEND FUNCTIONS
-# ============================================================
-
-async def send_message(
-    chat_id,
-    text,
-    reply_markup=None
-):
-
-    data = {
-        "chat_id": chat_id,
-        "text": text
-    }
-
-    if reply_markup:
-
-        data["reply_markup"] = json.dumps(
-            reply_markup,
-            ensure_ascii=False
-        )
-
-    return await telegram_api(
-        "sendMessage",
-        data=data
-    )
-
-
-async def answer_callback(
-    callback_id,
-    text=""
-):
-
-    return await telegram_api(
-        "answerCallbackQuery",
-        data={
-            "callback_query_id": callback_id,
-            "text": text
-        }
-    )
-
-
-async def send_audio(
-    chat_id,
-    file_path,
-    caption=None
-):
-
-    data = {
-        "chat_id": chat_id
-    }
-
-    if caption:
-        data["caption"] = caption
-
-    files = {
-        "audio": (
-            Path(file_path).name,
-            file_path,
-            "audio/mpeg"
-        )
-    }
-
-    return await telegram_api(
-        "sendAudio",
-        data=data,
-        files=files
-    )
-
-
-async def send_video(
-    chat_id,
-    file_path,
-    caption=None
-):
-
-    data = {
-        "chat_id": chat_id,
-        "supports_streaming": "true"
-    }
-
-    if caption:
-        data["caption"] = caption
-
-    files = {
-        "video": (
-            Path(file_path).name,
-            file_path,
-            "video/mp4"
-        )
-    }
-
-    return await telegram_api(
-        "sendVideo",
-        data=data,
-        files=files
-    )
+        "kid_female": {
+            "name": "👧 Kids Female",
+            "voice": "en-US-JennyNeural",
+            "pitch": "+35Hz",
+            "rate_adjust": 10,
+        },
+    },
+}
 
 
 # ============================================================
 # USER SETTINGS
 # ============================================================
 
-USER_SETTINGS = {}
+user_settings = {}
 
 
-def get_user_settings(user_id):
+def get_user_settings(user_id: int):
 
-    if user_id not in USER_SETTINGS:
+    if user_id not in user_settings:
 
-        USER_SETTINGS[user_id] = {
-            "language": "bn",
-            "voice": "male",
-            "speed": "-30%",
-            "word_pause": False,
-            "last_mp3": None,
-            "last_mp4": None
+        user_settings[user_id] = {
+            "language": DEFAULT_LANGUAGE,
+            "voice_type": DEFAULT_VOICE_TYPE,
+            "speed": DEFAULT_SPEED,
         }
 
-    return USER_SETTINGS[user_id]
+    return user_settings[user_id]
 
 
 # ============================================================
-# VOICE CONFIG
+# HELPERS
 # ============================================================
 
-VOICE_CONFIG = {
-
-    # --------------------------------------------------------
-    # BANGLA
-    # --------------------------------------------------------
-
-    "bn_male": {
-        "name": "বাংলা Male",
-        "voice": "bn-BD-PradeepNeural",
-        "pitch": "+0Hz",
-        "rate": "-30%"
-    },
-
-    "bn_female": {
-        "name": "বাংলা Female",
-        "voice": "bn-BD-NabanitaNeural",
-        "pitch": "+0Hz",
-        "rate": "-30%"
-    },
-
-    "bn_kid_male_1": {
-        "name": "Kids Male 1",
-        "voice": "bn-BD-PradeepNeural",
-        "pitch": "+20Hz",
-        "rate": "-30%"
-    },
-
-    "bn_kid_male_2": {
-        "name": "Kids Male 2",
-        "voice": "bn-BD-PradeepNeural",
-        "pitch": "+35Hz",
-        "rate": "-30%"
-    },
-
-    "bn_kid_female_1": {
-        "name": "Kids Female 1",
-        "voice": "bn-BD-NabanitaNeural",
-        "pitch": "+20Hz",
-        "rate": "-30%"
-    },
-
-    "bn_kid_female_2": {
-        "name": "Kids Female 2",
-        "voice": "bn-BD-NabanitaNeural",
-        "pitch": "+35Hz",
-        "rate": "-30%"
-    },
-
-    # --------------------------------------------------------
-    # ENGLISH
-    # --------------------------------------------------------
-
-    "en_male": {
-        "name": "English Male",
-        "voice": "en-US-AndrewMultilingualNeural",
-        "pitch": "+0Hz",
-        "rate": "-30%"
-    },
-
-    "en_female": {
-        "name": "English Female",
-        "voice": "en-US-AvaMultilingualNeural",
-        "pitch": "+0Hz",
-        "rate": "-30%"
-    },
-
-    "en_kid_male_1": {
-        "name": "Kids Male 1",
-        "voice": "en-US-ChristopherNeural",
-        "pitch": "+20Hz",
-        "rate": "-30%"
-    },
-
-    "en_kid_male_2": {
-        "name": "Kids Male 2",
-        "voice": "en-US-ChristopherNeural",
-        "pitch": "+35Hz",
-        "rate": "-30%"
-    },
-
-    "en_kid_female_1": {
-        "name": "Kids Female 1",
-        "voice": "en-US-AnaNeural",
-        "pitch": "+10Hz",
-        "rate": "-30%"
-    },
-
-    "en_kid_female_2": {
-        "name": "Kids Female 2",
-        "voice": "en-US-AnaNeural",
-        "pitch": "+25Hz",
-        "rate": "-30%"
-    }
-}
+def clamp_speed(speed: int) -> int:
+    return max(-50, min(50, speed))
 
 
-# ============================================================
-# KEYBOARDS
-# ============================================================
+def make_rate(
+    speed: int,
+    extra_rate: int = 0
+) -> str:
 
-def main_keyboard():
+    final_rate = clamp_speed(
+        speed + extra_rate
+    )
 
-    return {
-        "keyboard": [
-            [
-                {
-                    "text": "🌐 Language",
-                    "callback_data": "language"
-                },
-                {
-                    "text": "🎤 Voice",
-                    "callback_data": "voice"
-                }
-            ],
-            [
-                {
-                    "text": "ℹ️ Help",
-                    "callback_data": "help"
-                }
-            ],
-            [
-                {
-                    "text": "🔄 Start",
-                    "callback_data": "start"
-                }
-            ]
-        ],
-        "resize_keyboard": True
-    }
+    return f"{final_rate:+d}%"
 
 
-def language_keyboard():
-
-    return {
-        "inline_keyboard": [
-            [
-                {
-                    "text": "🇧🇩 বাংলা",
-                    "callback_data": "lang_bn"
-                },
-                {
-                    "text": "🇺🇸 English",
-                    "callback_data": "lang_en"
-                }
-            ],
-            [
-                {
-                    "text": "🔙 Back",
-                    "callback_data": "back"
-                }
-            ]
-        ]
-    }
-
-
-def bangla_voice_keyboard():
-
-    return {
-        "inline_keyboard": [
-
-            [
-                {
-                    "text": "👨 বাংলা Male",
-                    "callback_data": "voice_bn_male"
-                }
-            ],
-
-            [
-                {
-                    "text": "👩 বাংলা Female",
-                    "callback_data": "voice_bn_female"
-                }
-            ],
-
-            [
-                {
-                    "text": "👦 Kids Male 1",
-                    "callback_data": "voice_bn_kid_male_1"
-                },
-                {
-                    "text": "👦 Kids Male 2",
-                    "callback_data": "voice_bn_kid_male_2"
-                }
-            ],
-
-            [
-                {
-                    "text": "👧 Kids Female 1",
-                    "callback_data": "voice_bn_kid_female_1"
-                },
-                {
-                    "text": "👧 Kids Female 2",
-                    "callback_data": "voice_bn_kid_female_2"
-                }
-            ],
-
-            [
-                {
-                    "text": "🔙 Back",
-                    "callback_data": "back"
-                }
-            ]
-        ]
-    }
-
-
-def english_voice_keyboard():
-
-    return {
-        "inline_keyboard": [
-
-            [
-                {
-                    "text": "👨 English Male",
-                    "callback_data": "voice_en_male"
-                }
-            ],
-
-            [
-                {
-                    "text": "👩 English Female",
-                    "callback_data": "voice_en_female"
-                }
-            ],
-
-            [
-                {
-                    "text": "👦 Kids Male 1",
-                    "callback_data": "voice_en_kid_male_1"
-                },
-                {
-                    "text": "👦 Kids Male 2",
-                    "callback_data": "voice_en_kid_male_2"
-                }
-            ],
-
-            [
-                {
-                    "text": "👧 Kids Female 1",
-                    "callback_data": "voice_en_kid_female_1"
-                },
-                {
-                    "text": "👧 Kids Female 2",
-                    "callback_data": "voice_en_kid_female_2"
-                }
-            ],
-
-            [
-                {
-                    "text": "🔙 Back",
-                    "callback_data": "back"
-                }
-            ]
-        ]
-    }
-
-
-def download_keyboard():
-
-    return {
-        "inline_keyboard": [
-            [
-                {
-                    "text": "🎵 Download MP3",
-                    "callback_data": "download_mp3"
-                }
-            ],
-            [
-                {
-                    "text": "🎬 Download MP4",
-                    "callback_data": "download_mp4"
-                }
-            ],
-            [
-                {
-                    "text": "🔙 Back",
-                    "callback_data": "back"
-                }
-            ]
-        ]
-    }
-
-
-# ============================================================
-# STATUS TEXT
-# ============================================================
-
-def status_text(user_id):
-
-    settings = get_user_settings(user_id)
+def get_voice_data(settings):
 
     language = settings["language"]
+    voice_type = settings["voice_type"]
 
-    if language == "bn":
-        language_text = "🇧🇩 বাংলা"
-    else:
-        language_text = "🇺🇸 English"
+    return VOICES[
+        language
+    ][
+        voice_type
+    ]
 
-    voice_type = settings["voice"]
 
-    full_key = f"{language}_{voice_type}"
+def settings_text(settings):
 
-    voice_info = VOICE_CONFIG.get(
-        full_key,
-        VOICE_CONFIG[
-            "bn_male" if language == "bn" else "en_male"
-        ]
-    )
+    language_name = LANGUAGES[
+        settings["language"]
+    ]
+
+    voice_name = VOICES[
+        settings["language"]
+    ][
+        settings["voice_type"]
+    ]["name"]
 
     return (
-        f"🎙️ VoiceGen BD\n\n"
-        f"🌐 Language: {language_text}\n"
-        f"🎤 Voice: {voice_info['name']}\n"
-        f"⏸️ Word-by-word pause: OFF\n"
-        f"🐢 Speed: -30%\n\n"
-        f"প্রধান আপনার Text পাঠান।"
+        "✅ Settings saved!\n\n"
+        "আপনার Text পাঠান।\n\n"
+        "⏸ Word-by-word pause: OFF\n"
+        f"🐢 Speed: {settings['speed']:+d}%\n"
+        f"🌐 Language: {language_name}\n"
+        f"🎙 Voice: {voice_name}"
+    )
+
+
+def main_keyboard(settings):
+
+    return InlineKeyboardMarkup([
+
+        [
+            InlineKeyboardButton(
+                "🌐 Language",
+                callback_data="language"
+            ),
+
+            InlineKeyboardButton(
+                "🎙 Voice",
+                callback_data="voice"
+            ),
+        ],
+
+        [
+            InlineKeyboardButton(
+                "⚡ Speed",
+                callback_data="speed"
+            ),
+        ],
+
+        [
+            InlineKeyboardButton(
+                "ℹ️ Help",
+                callback_data="help"
+            ),
+        ],
+
+        [
+            InlineKeyboardButton(
+                "🔄 Start",
+                callback_data="start"
+            ),
+        ],
+    ])
+
+
+# ============================================================
+# START
+# ============================================================
+
+async def start(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    user_id = update.effective_user.id
+
+    settings = get_user_settings(
+        user_id
+    )
+
+    text = (
+        "🎙 *VoiceGen BD*\n\n"
+        "আপনার Text পাঠান। আমি সেটাকে Voice-এ convert করব।\n\n"
+        "🎵 MP3 Download\n"
+        "🎬 MP4 Download\n"
+        "⏸ Word-by-word pause: OFF\n"
+        "👨 Male / 👩 Female\n"
+        "👦 Kids Male / 👧 Kids Female"
+    )
+
+    if update.message:
+
+        await update.message.reply_text(
+            text,
+            parse_mode="Markdown",
+            reply_markup=main_keyboard(settings)
+        )
+
+    elif update.callback_query:
+
+        await update.callback_query.edit_message_text(
+            text,
+            parse_mode="Markdown",
+            reply_markup=main_keyboard(settings)
+        )
+
+
+# ============================================================
+# LANGUAGE MENU
+# ============================================================
+
+async def language_menu(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    query = update.callback_query
+
+    await query.answer()
+
+    keyboard = [
+
+        [
+            InlineKeyboardButton(
+                "🇧🇩 বাংলা",
+                callback_data="lang_bn"
+            ),
+
+            InlineKeyboardButton(
+                "🇺🇸 English",
+                callback_data="lang_en"
+            ),
+        ],
+
+        [
+            InlineKeyboardButton(
+                "⬅️ Back",
+                callback_data="back"
+            )
+        ],
+    ]
+
+    await query.edit_message_text(
+        "🌐 Select Language:",
+        reply_markup=InlineKeyboardMarkup(
+            keyboard
+        )
     )
 
 
 # ============================================================
-# TEXT TO SPEECH
+# VOICE MENU
 # ============================================================
 
-async def generate_audio(
-    text,
-    user_id,
-    output_path
+async def voice_menu(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
 ):
 
-    settings = get_user_settings(user_id)
+    query = update.callback_query
 
-    language = settings["language"]
-    voice_type = settings["voice"]
+    await query.answer()
 
-    voice_key = f"{language}_{voice_type}"
+    keyboard = [
 
-    if voice_key not in VOICE_CONFIG:
+        [
+            InlineKeyboardButton(
+                "👨 Male",
+                callback_data="voice_male"
+            ),
 
-        voice_key = (
-            "bn_male"
-            if language == "bn"
-            else "en_male"
+            InlineKeyboardButton(
+                "👩 Female",
+                callback_data="voice_female"
+            ),
+        ],
+
+        [
+            InlineKeyboardButton(
+                "👦 Kids Male",
+                callback_data="voice_kid_male"
+            ),
+
+            InlineKeyboardButton(
+                "👧 Kids Female",
+                callback_data="voice_kid_female"
+            ),
+        ],
+
+        [
+            InlineKeyboardButton(
+                "⬅️ Back",
+                callback_data="back"
+            )
+        ],
+    ]
+
+    await query.edit_message_text(
+        "🎙 Select Voice:",
+        reply_markup=InlineKeyboardMarkup(
+            keyboard
         )
+    )
 
-    config = VOICE_CONFIG[voice_key]
+
+# ============================================================
+# SPEED MENU
+# ============================================================
+
+async def speed_menu(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    query = update.callback_query
+
+    await query.answer()
+
+    keyboard = [
+
+        [
+            InlineKeyboardButton(
+                "-50%",
+                callback_data="speed_-50"
+            ),
+
+            InlineKeyboardButton(
+                "-40%",
+                callback_data="speed_-40"
+            ),
+
+            InlineKeyboardButton(
+                "-30%",
+                callback_data="speed_-30"
+            ),
+        ],
+
+        [
+            InlineKeyboardButton(
+                "-20%",
+                callback_data="speed_-20"
+            ),
+
+            InlineKeyboardButton(
+                "0%",
+                callback_data="speed_0"
+            ),
+
+            InlineKeyboardButton(
+                "+20%",
+                callback_data="speed_20"
+            ),
+        ],
+
+        [
+            InlineKeyboardButton(
+                "+30%",
+                callback_data="speed_30"
+            ),
+
+            InlineKeyboardButton(
+                "+40%",
+                callback_data="speed_40"
+            ),
+
+            InlineKeyboardButton(
+                "+50%",
+                callback_data="speed_50"
+            ),
+        ],
+
+        [
+            InlineKeyboardButton(
+                "⬅️ Back",
+                callback_data="back"
+            )
+        ],
+    ]
+
+    await query.edit_message_text(
+        "⚡ Select speaking speed:",
+        reply_markup=InlineKeyboardMarkup(
+            keyboard
+        )
+    )
+
+
+# ============================================================
+# HELP
+# ============================================================
+
+async def help_menu(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    query = update.callback_query
+
+    await query.answer()
+
+    text = (
+        "ℹ️ *VoiceGen BD Help*\n\n"
+
+        "1️⃣ Language থেকে বাংলা/English নির্বাচন করুন।\n\n"
+
+        "2️⃣ Voice থেকে Male/Female/Kids voice নির্বাচন করুন।\n\n"
+
+        "3️⃣ Speed থেকে speaking speed নির্বাচন করুন।\n\n"
+
+        "4️⃣ তারপর আপনার Text পাঠান।\n\n"
+
+        "🎵 MP3 তৈরি হবে।\n"
+        "🎬 MP4 তৈরি হবে।\n\n"
+
+        "⏸ Word-by-word pause সম্পূর্ণ OFF।\n"
+        "Text একসাথে TTS engine-এ পাঠানো হয়।"
+    )
+
+    await query.edit_message_text(
+        text,
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton(
+                    "⬅️ Back",
+                    callback_data="back"
+                )
+            ]
+        ])
+    )
+
+
+# ============================================================
+# GENERATE MP3
+# ============================================================
+
+async def generate_mp3(
+    text: str,
+    output_file: str,
+    voice: str,
+    rate: str,
+    pitch: str,
+):
+
+    """
+    পুরো text একসাথে TTS করা হচ্ছে।
+    Word-by-word split করা হচ্ছে না।
+    """
 
     communicate = edge_tts.Communicate(
         text=text,
-        voice=config["voice"],
-        rate=SPEED_RATE,
-        pitch=config["pitch"]
+        voice=voice,
+        rate=rate,
+        volume="+0%",
+        pitch=pitch,
     )
 
     await communicate.save(
-        str(output_path)
+        output_file
     )
 
-    return output_path
-
 
 # ============================================================
-# FFPROBE DURATION
+# GET MEDIA DURATION
 # ============================================================
 
-def get_media_duration(file_path):
+def get_media_duration(
+    media_file: str
+) -> float:
+
+    """
+    FFmpeg দিয়ে media duration বের করা।
+    """
+
+    ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
 
     command = [
-        "ffprobe",
-        "-v",
-        "error",
-        "-show_entries",
-        "format=duration",
-        "-of",
-        "default=noprint_wrappers=1:nokey=1",
-        str(file_path)
+
+        ffmpeg,
+
+        "-hide_banner",
+
+        "-i",
+        media_file,
+
+        "-f",
+        "null",
+
+        "-"
     ]
 
     result = subprocess.run(
         command,
-        capture_output=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True
     )
 
-    if result.returncode != 0:
+    match = re.search(
+        r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)",
+        result.stderr
+    )
 
-        logger.error(
-            "ffprobe error: %s",
-            result.stderr
-        )
+    if not match:
 
         raise RuntimeError(
-            "ffprobe could not read media duration."
+            "Media duration detect করা যায়নি.\n\n"
+            + result.stderr[-3000:]
         )
 
-    value = result.stdout.strip()
+    hours = int(
+        match.group(1)
+    )
 
-    if not value:
+    minutes = int(
+        match.group(2)
+    )
+
+    seconds = float(
+        match.group(3)
+    )
+
+    duration = (
+        hours * 3600
+        + minutes * 60
+        + seconds
+    )
+
+    if duration <= 0:
+
         raise RuntimeError(
-            "ffprobe returned empty duration."
+            "Invalid media duration."
         )
 
-    return float(value)
-
-
-# ============================================================
-# CHECK FFMPEG
-# ============================================================
-
-def check_ffmpeg():
-
-    for program in ["ffmpeg", "ffprobe"]:
-
-        try:
-
-            result = subprocess.run(
-                [program, "-version"],
-                capture_output=True,
-                text=True
-            )
-
-            if result.returncode != 0:
-
-                raise RuntimeError(
-                    f"{program} is not working."
-                )
-
-            first_line = (
-                result.stdout.splitlines()[0]
-                if result.stdout
-                else program
-            )
-
-            logger.info(
-                "%s available: %s",
-                program,
-                first_line
-            )
-
-        except FileNotFoundError:
-
-            raise RuntimeError(
-                f"{program} was not found. "
-                f"FFmpeg must be installed on Render."
-            )
+    return duration
 
 
 # ============================================================
 # CREATE MP4
 # ============================================================
 
-def create_mp4(
-    audio_path,
-    output_path
+def generate_mp4(
+    mp3_file: str,
+    mp4_file: str
 ):
 
     """
-    Create a black MP4 whose duration follows the audio.
+    MP3-এর exact duration অনুযায়ী MP4 তৈরি করে।
 
-    Important:
-    - Audio is the duration master.
-    - -shortest stops the output when audio ends.
-    - -t is also supplied as a safety limit.
-    - No imageio-ffmpeg.
+    Example:
+        MP3 = 5 seconds
+        MP4 = 5 seconds
+
+    কোনো extra 56-second silent video নয়।
     """
 
-    audio_duration = get_media_duration(
-        audio_path
+    ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+
+    # --------------------------------------------------------
+    # Get actual MP3 duration
+    # --------------------------------------------------------
+
+    duration = get_media_duration(
+        mp3_file
     )
 
-    logger.info(
-        "Original audio duration: %.3f seconds",
-        audio_duration
+    print(
+        f"[MP4] MP3 duration = "
+        f"{duration:.3f} sec"
     )
 
-    # Add only a tiny safety tolerance.
-    # This prevents FFmpeg from cutting the final audio frame.
-    max_duration = audio_duration + 0.05
+    # --------------------------------------------------------
+    # Use 25 FPS
+    # --------------------------------------------------------
 
-    duration_string = f"{max_duration:.3f}"
+    fps = 25
+
+    # Exact number of frames
+    frame_count = max(
+        1,
+        round(
+            duration * fps
+        )
+    )
+
+    print(
+        f"[MP4] FPS = {fps}"
+    )
+
+    print(
+        f"[MP4] Frames = {frame_count}"
+    )
+
+    # --------------------------------------------------------
+    # IMPORTANT:
+    #
+    # Instead of infinite color video + shortest,
+    # generate EXACT number of frames.
+    # --------------------------------------------------------
 
     command = [
 
-        "ffmpeg",
+        ffmpeg,
 
         "-y",
 
+        "-hide_banner",
+
+        "-loglevel",
+        "error",
+
         # ----------------------------------------------------
-        # Video input
+        # Generate exact number of black frames
         # ----------------------------------------------------
 
         "-f",
         "lavfi",
 
         "-i",
-        "color=c=black:s=1280x720:r=30",
+        (
+            f"color=c=black:"
+            f"s=720x720:"
+            f"r={fps}"
+        ),
 
         # ----------------------------------------------------
-        # Audio input
+        # Audio
         # ----------------------------------------------------
 
         "-i",
-        str(audio_path),
+        mp3_file,
 
         # ----------------------------------------------------
-        # Maps
+        # Map streams
         # ----------------------------------------------------
 
         "-map",
@@ -756,19 +721,21 @@ def create_mp4(
         "1:a:0",
 
         # ----------------------------------------------------
-        # Duration
+        # EXACT VIDEO FRAME COUNT
+        # ----------------------------------------------------
+
+        "-frames:v",
+        str(frame_count),
+
+        # ----------------------------------------------------
+        # Audio duration
         # ----------------------------------------------------
 
         "-t",
-        duration_string,
-
-        "-shortest",
-
-        "-fflags",
-        "+shortest",
+        f"{duration:.3f}",
 
         # ----------------------------------------------------
-        # Video
+        # Video codec
         # ----------------------------------------------------
 
         "-c:v",
@@ -777,17 +744,11 @@ def create_mp4(
         "-preset",
         "veryfast",
 
-        "-tune",
-        "stillimage",
-
         "-pix_fmt",
         "yuv420p",
 
-        "-r",
-        "30",
-
         # ----------------------------------------------------
-        # Audio
+        # Audio codec
         # ----------------------------------------------------
 
         "-c:a",
@@ -796,105 +757,115 @@ def create_mp4(
         "-b:a",
         "128k",
 
-        "-ar",
-        "44100",
-
         # ----------------------------------------------------
-        # MP4
+        # MP4 compatibility
         # ----------------------------------------------------
 
         "-movflags",
         "+faststart",
 
-        # ----------------------------------------------------
-        # Output
-        # ----------------------------------------------------
-
-        str(output_path)
+        mp4_file,
     ]
-
-    logger.info(
-        "Running FFmpeg for MP4..."
-    )
 
     result = subprocess.run(
         command,
-        capture_output=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True
     )
 
     if result.returncode != 0:
 
-        logger.error(
-            "FFmpeg failed:\n%s",
-            result.stderr
+        raise RuntimeError(
+            "FFmpeg MP4 conversion failed:\n\n"
+            + result.stderr[-4000:]
         )
+
+    # --------------------------------------------------------
+    # Check file
+    # --------------------------------------------------------
+
+    if not os.path.exists(
+        mp4_file
+    ):
 
         raise RuntimeError(
-            "FFmpeg could not create MP4."
+            "MP4 file তৈরি হয়নি."
         )
 
-    if not Path(output_path).exists():
+    if os.path.getsize(
+        mp4_file
+    ) <= 0:
 
         raise RuntimeError(
-            "FFmpeg finished but MP4 file was not created."
+            "MP4 file empty."
         )
 
-    mp4_duration = get_media_duration(
-        output_path
+    # --------------------------------------------------------
+    # Verify final MP4
+    # --------------------------------------------------------
+
+    final_duration = get_media_duration(
+        mp4_file
     )
 
-    logger.info(
-        "Generated MP4 duration: %.3f seconds",
-        mp4_duration
-    )
-
-    difference = abs(
-        mp4_duration - audio_duration
-    )
-
-    logger.info(
-        "Audio/MP4 duration difference: %.3f seconds",
-        difference
+    print(
+        f"[MP4] Final MP4 duration = "
+        f"{final_duration:.3f} sec"
     )
 
     # --------------------------------------------------------
-    # If MP4 is still too long, perform a second trim pass.
+    # Safety check
     # --------------------------------------------------------
 
-    if difference > 0.15:
+    if final_duration > duration + 1.0:
 
-        logger.warning(
-            "MP4 duration mismatch detected. "
-            "Running correction pass."
+        print(
+            "[MP4] Duration is too long. "
+            "Rebuilding with hard trim."
         )
 
-        corrected_path = (
-            Path(output_path).with_suffix(".fixed.mp4")
-        )
+        trim_command = [
 
-        correction_duration = max(
-            0.05,
-            audio_duration
-        )
-
-        correction_command = [
-
-            "ffmpeg",
+            ffmpeg,
 
             "-y",
 
-            "-i",
-            str(output_path),
+            "-hide_banner",
 
+            "-loglevel",
+            "error",
+
+            # Video
+            "-f",
+            "lavfi",
+
+            "-i",
+            (
+                "color=c=black:"
+                "s=720x720:"
+                "r=25"
+            ),
+
+            # Audio
+            "-i",
+            mp3_file,
+
+            "-map",
+            "0:v:0",
+
+            "-map",
+            "1:a:0",
+
+            # HARD LIMIT
             "-t",
-            f"{correction_duration:.3f}",
+            f"{duration:.3f}",
 
             "-c:v",
             "libx264",
 
             "-preset",
-            "veryfast",
+            "ultrafast",
 
             "-pix_fmt",
             "yuv420p",
@@ -908,973 +879,628 @@ def create_mp4(
             "-movflags",
             "+faststart",
 
-            str(corrected_path)
+            mp4_file,
         ]
 
-        correction_result = subprocess.run(
-            correction_command,
-            capture_output=True,
+        result2 = subprocess.run(
+            trim_command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True
         )
 
-        if correction_result.returncode != 0:
-
-            logger.error(
-                "Correction FFmpeg error:\n%s",
-                correction_result.stderr
-            )
+        if result2.returncode != 0:
 
             raise RuntimeError(
-                "MP4 duration correction failed."
+                "Final MP4 trim failed:\n\n"
+                + result2.stderr[-4000:]
             )
 
-        if corrected_path.exists():
-
-            corrected_duration = get_media_duration(
-                corrected_path
-            )
-
-            logger.info(
-                "Corrected MP4 duration: %.3f seconds",
-                corrected_duration
-            )
-
-            try:
-                Path(output_path).unlink()
-            except Exception:
-                pass
-
-            corrected_path.rename(
-                output_path
-            )
-
-            mp4_duration = corrected_duration
-
-    final_difference = abs(
-        mp4_duration - audio_duration
-    )
-
-    logger.info(
-        "FINAL audio duration: %.3f seconds",
-        audio_duration
-    )
-
-    logger.info(
-        "FINAL MP4 duration: %.3f seconds",
-        mp4_duration
-    )
-
-    logger.info(
-        "FINAL duration difference: %.3f seconds",
-        final_difference
-    )
-
-    return output_path
-
-
-# ============================================================
-# CLEAN OLD FILES
-# ============================================================
-
-def cleanup_old_files():
-
-    try:
-
-        for file_path in TEMP_DIR.iterdir():
-
-            if not file_path.is_file():
-                continue
-
-            try:
-
-                age = (
-                    __import__("time").time()
-                    - file_path.stat().st_mtime
-                )
-
-                # Delete files older than 30 minutes
-                if age > 1800:
-
-                    file_path.unlink(
-                        missing_ok=True
-                    )
-
-            except Exception:
-
-                logger.exception(
-                    "Could not delete old file: %s",
-                    file_path
-                )
-
-    except Exception:
-
-        logger.exception(
-            "Cleanup failed."
+        final_duration = get_media_duration(
+            mp4_file
         )
 
+        print(
+            f"[MP4] After trim = "
+            f"{final_duration:.3f} sec"
+        )
+
+    print(
+        "[MP4] Created successfully."
+    )
+
 
 # ============================================================
-# PROCESS TEXT
+# TEXT HANDLER
 # ============================================================
 
-async def process_text(
-    chat_id,
-    user_id,
-    text
+async def text_handler(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
 ):
 
-    text = text.strip()
+    if not update.message:
+        return
+
+    text = update.message.text.strip()
 
     if not text:
 
-        await send_message(
-            chat_id,
-            "❌ Text খালি। আবার Text পাঠান।"
+        await update.message.reply_text(
+            "❌ Please send some text."
         )
 
         return
 
-    if len(text) > 4000:
+    user_id = update.effective_user.id
 
-        await send_message(
-            chat_id,
-            "❌ Text অনেক বড়। সর্বোচ্চ 4000 characters ব্যবহার করুন।"
-        )
-
-        return
-
-    await send_message(
-        chat_id,
-        "⏳ Voice তৈরি হচ্ছে..."
+    settings = get_user_settings(
+        user_id
     )
 
-    unique_id = (
-        f"{user_id}_{os.getpid()}_"
-        f"{int(__import__('time').time() * 1000)}"
+    voice_data = get_voice_data(
+        settings
     )
 
-    audio_path = (
-        TEMP_DIR /
-        f"voice_{unique_id}.mp3"
+    voice = voice_data[
+        "voice"
+    ]
+
+    pitch = voice_data[
+        "pitch"
+    ]
+
+    speed = settings[
+        "speed"
+    ]
+
+    extra_rate = voice_data[
+        "rate_adjust"
+    ]
+
+    rate = make_rate(
+        speed,
+        extra_rate
     )
 
-    mp4_path = (
-        TEMP_DIR /
-        f"voice_{unique_id}.mp4"
+    status = await update.message.reply_text(
+        "⏳ Voice তৈরি হচ্ছে...\n\n"
+        "⏸ Word-by-word pause: OFF"
+    )
+
+    temp_dir = tempfile.mkdtemp(
+        prefix="voicegen_"
+    )
+
+    mp3_file = os.path.join(
+        temp_dir,
+        "voice.mp3"
+    )
+
+    mp4_file = os.path.join(
+        temp_dir,
+        "voice.mp4"
     )
 
     try:
 
-        # ----------------------------------------------------
-        # Generate MP3
-        # ----------------------------------------------------
+        # ====================================================
+        # MP3
+        # ====================================================
 
-        await generate_audio(
-            text,
-            user_id,
-            audio_path
+        await generate_mp3(
+            text=text,
+            output_file=mp3_file,
+            voice=voice,
+            rate=rate,
+            pitch=pitch,
         )
 
-        if not audio_path.exists():
+        # ====================================================
+        # MP4
+        # ====================================================
 
-            raise RuntimeError(
-                "MP3 file was not created."
+        await status.edit_text(
+            "🎬 MP4 তৈরি হচ্ছে...\n\n"
+            "⏸ Word-by-word pause: OFF"
+        )
+
+        await asyncio.to_thread(
+            generate_mp4,
+            mp3_file,
+            mp4_file
+        )
+
+        # ====================================================
+        # SEND MP3
+        # ====================================================
+
+        await status.edit_text(
+            "📤 MP3 পাঠানো হচ্ছে..."
+        )
+
+        language_name = LANGUAGES[
+            settings["language"]
+        ]
+
+        voice_name = voice_data[
+            "name"
+        ]
+
+        caption = (
+            "🎙 VoiceGen BD\n\n"
+            f"🌐 Language: {language_name}\n"
+            f"🎙 Voice: {voice_name}\n"
+            "⏸ Word pause: OFF\n"
+            f"🐢 Speed: {settings['speed']:+d}%"
+        )
+
+        with open(
+            mp3_file,
+            "rb"
+        ) as audio:
+
+            await update.message.reply_audio(
+                audio=audio,
+                title="VoiceGen BD",
+                performer="VoiceGen BD",
+                caption=caption
             )
 
-        # ----------------------------------------------------
-        # Get audio duration
-        # ----------------------------------------------------
+        # ====================================================
+        # SEND MP4
+        # ====================================================
 
-        audio_duration = get_media_duration(
-            audio_path
+        await status.edit_text(
+            "📤 MP4 পাঠানো হচ্ছে..."
         )
 
-        logger.info(
-            "Generated audio duration: %.3f sec",
-            audio_duration
-        )
+        with open(
+            mp4_file,
+            "rb"
+        ) as video:
 
-        # ----------------------------------------------------
-        # Create MP4
-        # ----------------------------------------------------
-
-        create_mp4(
-            audio_path,
-            mp4_path
-        )
-
-        # ----------------------------------------------------
-        # Verify final MP4
-        # ----------------------------------------------------
-
-        final_mp4_duration = get_media_duration(
-            mp4_path
-        )
-
-        duration_difference = abs(
-            final_mp4_duration - audio_duration
-        )
-
-        logger.info(
-            "Audio = %.3f sec | MP4 = %.3f sec | Difference = %.3f sec",
-            audio_duration,
-            final_mp4_duration,
-            duration_difference
-        )
-
-        # Don't allow a large mismatch.
-        if duration_difference > 0.20:
-
-            raise RuntimeError(
-                "MP4 duration mismatch: "
-                f"audio={audio_duration:.2f}s, "
-                f"mp4={final_mp4_duration:.2f}s"
+            await update.message.reply_video(
+                video=video,
+                caption=(
+                    "🎬 VoiceGen BD MP4\n\n"
+                    f"🌐 Language: {language_name}\n"
+                    f"🎙 Voice: {voice_name}\n"
+                    "⏸ Word pause: OFF\n"
+                    f"🐢 Speed: {settings['speed']:+d}%"
+                ),
+                supports_streaming=True
             )
 
-        # ----------------------------------------------------
-        # Save files
-        # ----------------------------------------------------
+        # ====================================================
+        # DELETE STATUS
+        # ====================================================
 
-        settings = get_user_settings(
-            user_id
-        )
+        await status.delete()
 
-        settings["last_mp3"] = str(
-            audio_path
-        )
+        # ====================================================
+        # SETTINGS AGAIN
+        # ====================================================
 
-        settings["last_mp4"] = str(
-            mp4_path
-        )
-
-        # ----------------------------------------------------
-        # Send result
-        # ----------------------------------------------------
-
-        await send_message(
-            chat_id,
-            (
-                f"✅ Voice তৈরি হয়েছে!\n\n"
-                f"🎵 MP3: {audio_duration:.2f} sec\n"
-                f"🎬 MP4: {final_mp4_duration:.2f} sec\n"
-                f"📏 Difference: {duration_difference:.2f} sec\n"
-                f"⏸️ Word-by-word pause: OFF\n"
-                f"🐢 Speed: -30%\n\n"
-                f"নিচের option থেকে download করুন:"
-            ),
-            reply_markup=download_keyboard()
+        await update.message.reply_text(
+            settings_text(settings),
+            reply_markup=main_keyboard(
+                settings
+            )
         )
 
     except Exception as e:
 
-        logger.exception(
-            "Voice generation failed."
+        print(
+            "================================"
         )
 
-        await send_message(
-            chat_id,
-            (
-                "❌ Voice তৈরি করতে সমস্যা হয়েছে।\n\n"
-                f"Error: {str(e)[:500]}"
+        print(
+            "TTS / MP4 ERROR:"
+        )
+
+        print(
+            repr(e)
+        )
+
+        print(
+            "================================"
+        )
+
+        try:
+
+            await status.edit_text(
+                "❌ Voice তৈরি করা যায়নি।\n\n"
+                "কিছুক্ষণ পরে আবার চেষ্টা করুন।\n\n"
+                f"Error: {str(e)[:700]}"
             )
-        )
 
+        except Exception:
+            pass
 
-# ============================================================
-# HANDLE MESSAGE
-# ============================================================
+    finally:
 
-async def handle_message(message):
+        # ====================================================
+        # CLEAN TEMP FILES
+        # ====================================================
 
-    chat = message.get(
-        "chat",
-        {}
-    )
+        try:
 
-    user = message.get(
-        "from",
-        {}
-    )
+            for file in Path(
+                temp_dir
+            ).glob("*"):
 
-    chat_id = chat.get("id")
-    user_id = user.get("id")
+                try:
+                    file.unlink()
 
-    if not chat_id or not user_id:
-        return
+                except Exception:
+                    pass
 
-    text = message.get(
-        "text",
-        ""
-    )
+            try:
 
-    # --------------------------------------------------------
-    # START
-    # --------------------------------------------------------
+                Path(
+                    temp_dir
+                ).rmdir()
 
-    if text.startswith("/start"):
+            except Exception:
+                pass
 
-        get_user_settings(
-            user_id
-        )
-
-        await send_message(
-            chat_id,
-            status_text(user_id),
-            reply_markup=main_keyboard()
-        )
-
-        return
-
-    # --------------------------------------------------------
-    # HELP
-    # --------------------------------------------------------
-
-    if text.startswith("/help"):
-
-        help_text = (
-            "ℹ️ VoiceGen BD Help\n\n"
-            "1️⃣ Language থেকে বাংলা অথবা English নির্বাচন করুন।\n"
-            "2️⃣ Voice থেকে আপনার পছন্দের voice নির্বাচন করুন।\n"
-            "3️⃣ Text পাঠান।\n"
-            "4️⃣ Voice তৈরি হলে MP3 অথবা MP4 download করুন।\n\n"
-            "⏸️ Word-by-word pause: OFF\n"
-            "🐢 Speed: -30%\n\n"
-            "🎬 MP4-এর duration audio-এর duration-এর সাথে "
-            "মিলিয়ে তৈরি হবে।"
-        )
-
-        await send_message(
-            chat_id,
-            help_text,
-            reply_markup=main_keyboard()
-        )
-
-        return
-
-    # --------------------------------------------------------
-    # NORMAL TEXT
-    # --------------------------------------------------------
-
-    if text:
-
-        await process_text(
-            chat_id,
-            user_id,
-            text
-        )
-
-        return
+        except Exception:
+            pass
 
 
 # ============================================================
 # CALLBACK HANDLER
 # ============================================================
 
-async def handle_callback(callback):
+async def callback_handler(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
 
-    callback_id = callback.get(
-        "id"
-    )
+    query = update.callback_query
 
-    data = callback.get(
-        "data",
-        ""
-    )
+    await query.answer()
 
-    message = callback.get(
-        "message",
-        {}
-    )
-
-    chat = message.get(
-        "chat",
-        {}
-    )
-
-    chat_id = chat.get(
-        "id"
-    )
-
-    user = callback.get(
-        "from",
-        {}
-    )
-
-    user_id = user.get(
-        "id"
-    )
-
-    if not chat_id or not user_id:
-        return
+    user_id = query.from_user.id
 
     settings = get_user_settings(
         user_id
     )
 
-    # --------------------------------------------------------
-    # Answer callback
-    # --------------------------------------------------------
+    data = query.data
 
-    await answer_callback(
-        callback_id
-    )
-
-    # --------------------------------------------------------
+    # ========================================================
     # START
-    # --------------------------------------------------------
+    # ========================================================
 
     if data == "start":
 
-        await send_message(
-            chat_id,
-            status_text(user_id),
-            reply_markup=main_keyboard()
+        await start(
+            update,
+            context
         )
 
         return
 
-    # --------------------------------------------------------
-    # BACK
-    # --------------------------------------------------------
-
-    if data == "back":
-
-        await send_message(
-            chat_id,
-            status_text(user_id),
-            reply_markup=main_keyboard()
-        )
-
-        return
-
-    # --------------------------------------------------------
+    # ========================================================
     # LANGUAGE
-    # --------------------------------------------------------
+    # ========================================================
 
     if data == "language":
 
-        await send_message(
-            chat_id,
-            "🌐 Language নির্বাচন করুন:",
-            reply_markup=language_keyboard()
+        await language_menu(
+            update,
+            context
         )
 
         return
 
-    # --------------------------------------------------------
+    # ========================================================
     # BANGLA
-    # --------------------------------------------------------
+    # ========================================================
 
     if data == "lang_bn":
 
-        settings["language"] = "bn"
+        settings[
+            "language"
+        ] = "bn"
 
-        await send_message(
-            chat_id,
-            (
-                "🇧🇩 বাংলা language selected.\n\n"
-                "🎤 Voice নির্বাচন করুন:"
-            ),
-            reply_markup=bangla_voice_keyboard()
+        if settings[
+            "voice_type"
+        ] not in VOICES["bn"]:
+
+            settings[
+                "voice_type"
+            ] = "male"
+
+        await query.edit_message_text(
+            settings_text(settings),
+            reply_markup=main_keyboard(
+                settings
+            )
         )
 
         return
 
-    # --------------------------------------------------------
+    # ========================================================
     # ENGLISH
-    # --------------------------------------------------------
+    # ========================================================
 
     if data == "lang_en":
 
-        settings["language"] = "en"
+        settings[
+            "language"
+        ] = "en"
 
-        await send_message(
-            chat_id,
-            (
-                "🇺🇸 English language selected.\n\n"
-                "🎤 Select voice:"
-            ),
-            reply_markup=english_voice_keyboard()
+        if settings[
+            "voice_type"
+        ] not in VOICES["en"]:
+
+            settings[
+                "voice_type"
+            ] = "male"
+
+        await query.edit_message_text(
+            settings_text(settings),
+            reply_markup=main_keyboard(
+                settings
+            )
         )
 
         return
 
-    # --------------------------------------------------------
-    # VOICE MENU
-    # --------------------------------------------------------
+    # ========================================================
+    # VOICE
+    # ========================================================
 
     if data == "voice":
 
-        if settings["language"] == "bn":
-
-            await send_message(
-                chat_id,
-                "🎤 বাংলা Voice নির্বাচন করুন:",
-                reply_markup=bangla_voice_keyboard()
-            )
-
-        else:
-
-            await send_message(
-                chat_id,
-                "🎤 Select English Voice:",
-                reply_markup=english_voice_keyboard()
-            )
+        await voice_menu(
+            update,
+            context
+        )
 
         return
 
-    # --------------------------------------------------------
-    # VOICE SELECTION
-    # --------------------------------------------------------
+    # ========================================================
+    # VOICE SELECT
+    # ========================================================
 
-    if data.startswith("voice_"):
+    if data.startswith(
+        "voice_"
+    ):
 
-        voice_key = data.replace(
+        voice_type = data.replace(
             "voice_",
             "",
             1
         )
 
-        language = settings["language"]
+        if voice_type in VOICES[
+            settings["language"]
+        ]:
 
-        expected_prefix = (
-            language + "_"
-        )
+            settings[
+                "voice_type"
+            ] = voice_type
 
-        if not voice_key.startswith(
-            expected_prefix
-        ):
-
-            await send_message(
-                chat_id,
-                "❌ এই voice এই language-এর জন্য নয়।"
+        await query.edit_message_text(
+            settings_text(settings),
+            reply_markup=main_keyboard(
+                settings
             )
-
-            return
-
-        voice_config = VOICE_CONFIG.get(
-            voice_key
-        )
-
-        if not voice_config:
-
-            await send_message(
-                chat_id,
-                "❌ Voice পাওয়া যায়নি।"
-            )
-
-            return
-
-        settings["voice"] = voice_key.replace(
-            language + "_",
-            "",
-            1
-        )
-
-        await send_message(
-            chat_id,
-            (
-                f"✅ Voice selected successfully:\n\n"
-                f"🎤 {voice_config['name']}\n"
-                f"⏸️ Word-by-word pause: OFF\n"
-                f"🐢 Speed: -30%\n\n"
-                f"এখন Text পাঠান।"
-            ),
-            reply_markup=main_keyboard()
         )
 
         return
 
-    # --------------------------------------------------------
+    # ========================================================
+    # SPEED
+    # ========================================================
+
+    if data == "speed":
+
+        await speed_menu(
+            update,
+            context
+        )
+
+        return
+
+    # ========================================================
+    # SPEED SELECT
+    # ========================================================
+
+    if data.startswith(
+        "speed_"
+    ):
+
+        try:
+
+            speed = int(
+                data.replace(
+                    "speed_",
+                    "",
+                    1
+                )
+            )
+
+            settings[
+                "speed"
+            ] = clamp_speed(
+                speed
+            )
+
+        except ValueError:
+            pass
+
+        await query.edit_message_text(
+            settings_text(settings),
+            reply_markup=main_keyboard(
+                settings
+            )
+        )
+
+        return
+
+    # ========================================================
     # HELP
-    # --------------------------------------------------------
+    # ========================================================
 
     if data == "help":
 
-        help_text = (
-            "ℹ️ VoiceGen BD\n\n"
-            "🌐 Language নির্বাচন করুন\n"
-            "🎤 Voice নির্বাচন করুন\n"
-            "📝 তারপর Text পাঠান\n\n"
-            "⏸️ Word-by-word pause: OFF\n"
-            "🐢 Speed: -30%\n\n"
-            "🎵 MP3 এবং 🎬 MP4 দুটোই পাওয়া যাবে।\n"
-            "MP4-এর duration audio-এর duration-এর সাথে "
-            "মিলিয়ে তৈরি হবে।"
-        )
-
-        await send_message(
-            chat_id,
-            help_text,
-            reply_markup=main_keyboard()
+        await help_menu(
+            update,
+            context
         )
 
         return
 
-    # --------------------------------------------------------
-    # MP3
-    # --------------------------------------------------------
+    # ========================================================
+    # BACK
+    # ========================================================
 
-    if data == "download_mp3":
+    if data == "back":
 
-        file_path = settings.get(
-            "last_mp3"
+        await query.edit_message_text(
+            settings_text(settings),
+            reply_markup=main_keyboard(
+                settings
+            )
         )
-
-        if (
-            not file_path
-            or not Path(file_path).exists()
-        ):
-
-            await send_message(
-                chat_id,
-                "❌ MP3 পাওয়া যায়নি। আগে একটি Text পাঠিয়ে Voice তৈরি করুন।"
-            )
-
-            return
-
-        await send_message(
-            chat_id,
-            "📤 MP3 পাঠানো হচ্ছে..."
-        )
-
-        try:
-
-            await send_audio(
-                chat_id,
-                file_path,
-                caption="🎵 VoiceGen BD - MP3"
-            )
-
-        except Exception as e:
-
-            logger.exception(
-                "MP3 send failed."
-            )
-
-            await send_message(
-                chat_id,
-                f"❌ MP3 পাঠাতে সমস্যা হয়েছে: {str(e)[:300]}"
-            )
-
-        return
-
-    # --------------------------------------------------------
-    # MP4
-    # --------------------------------------------------------
-
-    if data == "download_mp4":
-
-        file_path = settings.get(
-            "last_mp4"
-        )
-
-        if (
-            not file_path
-            or not Path(file_path).exists()
-        ):
-
-            await send_message(
-                chat_id,
-                "❌ MP4 পাওয়া যায়নি। আগে একটি Text পাঠিয়ে Voice তৈরি করুন।"
-            )
-
-            return
-
-        await send_message(
-            chat_id,
-            "📤 MP4 পাঠানো হচ্ছে..."
-        )
-
-        try:
-
-            await send_video(
-                chat_id,
-                file_path,
-                caption="🎬 VoiceGen BD - MP4"
-            )
-
-        except Exception as e:
-
-            logger.exception(
-                "MP4 send failed."
-            )
-
-            await send_message(
-                chat_id,
-                f"❌ MP4 পাঠাতে সমস্যা হয়েছে: {str(e)[:300]}"
-            )
 
         return
 
 
 # ============================================================
-# WEBHOOK
+# ERROR HANDLER
 # ============================================================
 
-async def telegram_webhook(request):
+async def error_handler(
+    update: object,
+    context: ContextTypes.DEFAULT_TYPE
+):
 
-    try:
+    print(
+        "BOT ERROR:",
+        repr(context.error)
+    )
 
-        update = await request.json()
 
-        logger.info(
-            "Telegram update received."
+# ============================================================
+# CREATE APPLICATION
+# ============================================================
+
+def create_application():
+
+    application = (
+        Application.builder()
+        .token(BOT_TOKEN)
+        .build()
+    )
+
+    application.add_handler(
+        CommandHandler(
+            "start",
+            start
         )
+    )
 
-        if "message" in update:
-
-            await handle_message(
-                update["message"]
-            )
-
-        elif "callback_query" in update:
-
-            await handle_callback(
-                update["callback_query"]
-            )
-
-        return web.json_response(
-            {"ok": True}
+    application.add_handler(
+        CallbackQueryHandler(
+            callback_handler
         )
+    )
 
-    except Exception as e:
-
-        logger.exception(
-            "Webhook error."
+    application.add_handler(
+        MessageHandler(
+            filters.TEXT & ~filters.COMMAND,
+            text_handler
         )
-
-        return web.json_response(
-            {
-                "ok": False,
-                "error": str(e)
-            },
-            status=200
-        )
-
-
-# ============================================================
-# HEALTH
-# ============================================================
-
-async def health(request):
-
-    return web.json_response(
-        {
-            "status": "ok",
-            "service": "VoiceGen BD",
-            "word_pause": False,
-            "speed": "-30%",
-            "mp3": True,
-            "mp4": True
-        }
     )
 
-
-# ============================================================
-# SET WEBHOOK
-# ============================================================
-
-async def set_webhook():
-
-    logger.info(
-        "Setting Telegram webhook..."
+    application.add_error_handler(
+        error_handler
     )
 
-    result = await telegram_api(
-        "setWebhook",
-        data={
-            "url": WEBHOOK_URL,
-            "drop_pending_updates": "true"
-        }
-    )
-
-    logger.info(
-        "Webhook result: %s",
-        result
-    )
-
-    if result.get("ok"):
-
-        logger.info(
-            "Webhook successfully set: %s",
-            WEBHOOK_URL
-        )
-
-    else:
-
-        logger.error(
-            "Webhook setup failed: %s",
-            result
-        )
-
-
-# ============================================================
-# WEBHOOK INFO
-# ============================================================
-
-async def get_webhook_info():
-
-    result = await telegram_api(
-        "getWebhookInfo"
-    )
-
-    logger.info(
-        "Webhook info: %s",
-        result
-    )
-
-
-# ============================================================
-# STARTUP
-# ============================================================
-
-async def on_startup(app):
-
-    logger.info(
-        "=========================================="
-    )
-
-    logger.info(
-        "VoiceGen BD starting..."
-    )
-
-    logger.info(
-        "Render URL: %s",
-        RENDER_URL
-    )
-
-    logger.info(
-        "Webhook URL: %s",
-        WEBHOOK_URL
-    )
-
-    logger.info(
-        "Word-by-word pause: OFF"
-    )
-
-    logger.info(
-        "Speed: -30%%"
-    )
-
-    logger.info(
-        "=========================================="
-    )
-
-    # --------------------------------------------------------
-    # Check FFmpeg
-    # --------------------------------------------------------
-
-    try:
-
-        check_ffmpeg()
-
-    except Exception as e:
-
-        logger.exception(
-            "FFmpeg check failed."
-        )
-
-        # Do not silently continue.
-        raise RuntimeError(
-            str(e)
-        )
-
-    # --------------------------------------------------------
-    # Cleanup old temporary files
-    # --------------------------------------------------------
-
-    cleanup_old_files()
-
-    # --------------------------------------------------------
-    # Telegram webhook
-    # --------------------------------------------------------
-
-    await set_webhook()
-
-    await get_webhook_info()
-
-
-# ============================================================
-# CLEANUP
-# ============================================================
-
-async def on_cleanup(app):
-
-    logger.info(
-        "VoiceGen BD shutting down..."
-    )
-
-    try:
-
-        await telegram_api(
-            "deleteWebhook"
-        )
-
-    except Exception:
-
-        logger.exception(
-            "Could not delete webhook."
-        )
-
-
-# ============================================================
-# APPLICATION
-# ============================================================
-
-app = web.Application(
-    client_max_size=20 * 1024 * 1024
-)
-
-app.router.add_get(
-    "/",
-    health
-)
-
-app.router.add_get(
-    "/health",
-    health
-)
-
-app.router.add_post(
-    WEBHOOK_PATH,
-    telegram_webhook
-)
-
-app.on_startup.append(
-    on_startup
-)
-
-app.on_cleanup.append(
-    on_cleanup
-)
+    return application
 
 
 # ============================================================
 # MAIN
 # ============================================================
 
+def main():
+
+    application = create_application()
+
+    # ========================================================
+    # WEBHOOK
+    # ========================================================
+
+    if WEBHOOK_URL:
+
+        webhook_url = (
+            WEBHOOK_URL.rstrip("/")
+        )
+
+        if not webhook_url.endswith(
+            "/telegram"
+        ):
+
+            webhook_url += "/telegram"
+
+        print(
+            "Starting VoiceGen BD webhook..."
+        )
+
+        print(
+            "Webhook URL:",
+            webhook_url
+        )
+
+        webhook_kwargs = {
+
+            "listen": "0.0.0.0",
+
+            "port": PORT,
+
+            "url_path": "telegram",
+
+            "webhook_url": webhook_url,
+        }
+
+        if WEBHOOK_SECRET:
+
+            webhook_kwargs[
+                "secret_token"
+            ] = WEBHOOK_SECRET
+
+        application.run_webhook(
+            **webhook_kwargs
+        )
+
+    # ========================================================
+    # POLLING FALLBACK
+    # ========================================================
+
+    else:
+
+        print(
+            "WEBHOOK_URL not found."
+        )
+
+        print(
+            "Starting polling mode..."
+        )
+
+        application.run_polling()
+
+
+# ============================================================
+# RUN
+# ============================================================
+
 if __name__ == "__main__":
 
-    logger.info(
-        "=========================================="
-    )
-
-    logger.info(
-        "VoiceGen BD is starting..."
-    )
-
-    logger.info(
-        "Port: %s",
-        PORT
-    )
-
-    logger.info(
-        "=========================================="
-    )
-
-    web.run_app(
-        app,
-        host="0.0.0.0",
-        port=PORT
-    )
+    main()
