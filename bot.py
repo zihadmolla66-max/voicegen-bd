@@ -30,9 +30,11 @@ RENDER_URL = os.getenv(
 WEBHOOK_PATH = "/telegram"
 WEBHOOK_URL = RENDER_URL + WEBHOOK_PATH
 
-WORD_PAUSE = False
+# User settings
 SPEED_RATE = "-30%"
+WORD_PAUSE = False
 
+# Temporary directory
 TEMP_DIR = Path(tempfile.gettempdir()) / "voicegen_bd"
 TEMP_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -58,7 +60,7 @@ TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
 async def telegram_api(method, data=None, files=None):
 
-    timeout = aiohttp.ClientTimeout(total=120)
+    timeout = aiohttp.ClientTimeout(total=180)
 
     async with aiohttp.ClientSession(timeout=timeout) as session:
 
@@ -118,7 +120,11 @@ async def telegram_api(method, data=None, files=None):
 # TELEGRAM SEND FUNCTIONS
 # ============================================================
 
-async def send_message(chat_id, text, reply_markup=None):
+async def send_message(
+    chat_id,
+    text,
+    reply_markup=None
+):
 
     data = {
         "chat_id": chat_id,
@@ -126,7 +132,11 @@ async def send_message(chat_id, text, reply_markup=None):
     }
 
     if reply_markup:
-        data["reply_markup"] = json.dumps(reply_markup)
+
+        data["reply_markup"] = json.dumps(
+            reply_markup,
+            ensure_ascii=False
+        )
 
     return await telegram_api(
         "sendMessage",
@@ -134,7 +144,10 @@ async def send_message(chat_id, text, reply_markup=None):
     )
 
 
-async def answer_callback(callback_id, text=""):
+async def answer_callback(
+    callback_id,
+    text=""
+):
 
     return await telegram_api(
         "answerCallbackQuery",
@@ -145,7 +158,11 @@ async def answer_callback(callback_id, text=""):
     )
 
 
-async def send_audio(chat_id, file_path, caption=None):
+async def send_audio(
+    chat_id,
+    file_path,
+    caption=None
+):
 
     data = {
         "chat_id": chat_id
@@ -169,7 +186,11 @@ async def send_audio(chat_id, file_path, caption=None):
     )
 
 
-async def send_video(chat_id, file_path, caption=None):
+async def send_video(
+    chat_id,
+    file_path,
+    caption=None
+):
 
     data = {
         "chat_id": chat_id,
@@ -209,14 +230,16 @@ def get_user_settings(user_id):
             "language": "bn",
             "voice": "male",
             "speed": "-30%",
-            "word_pause": False
+            "word_pause": False,
+            "last_mp3": None,
+            "last_mp4": None
         }
 
     return USER_SETTINGS[user_id]
 
 
 # ============================================================
-# VOICES
+# VOICE CONFIG
 # ============================================================
 
 VOICE_CONFIG = {
@@ -266,7 +289,6 @@ VOICE_CONFIG = {
         "pitch": "+35Hz",
         "rate": "-30%"
     },
-
 
     # --------------------------------------------------------
     # ENGLISH
@@ -504,7 +526,7 @@ def download_keyboard():
 
 
 # ============================================================
-# STATUS
+# STATUS TEXT
 # ============================================================
 
 def status_text(user_id):
@@ -518,13 +540,15 @@ def status_text(user_id):
     else:
         language_text = "🇺🇸 English"
 
-    voice_key = settings["voice"]
+    voice_type = settings["voice"]
 
-    full_key = f"{language}_{voice_key}"
+    full_key = f"{language}_{voice_type}"
 
     voice_info = VOICE_CONFIG.get(
         full_key,
-        VOICE_CONFIG["bn_male"]
+        VOICE_CONFIG[
+            "bn_male" if language == "bn" else "en_male"
+        ]
     )
 
     return (
@@ -541,7 +565,11 @@ def status_text(user_id):
 # TEXT TO SPEECH
 # ============================================================
 
-async def generate_audio(text, user_id, output_path):
+async def generate_audio(
+    text,
+    user_id,
+    output_path
+):
 
     settings = get_user_settings(user_id)
 
@@ -567,13 +595,15 @@ async def generate_audio(text, user_id, output_path):
         pitch=config["pitch"]
     )
 
-    await communicate.save(str(output_path))
+    await communicate.save(
+        str(output_path)
+    )
 
     return output_path
 
 
 # ============================================================
-# GET MEDIA DURATION
+# FFPROBE DURATION
 # ============================================================
 
 def get_media_duration(file_path):
@@ -603,116 +633,143 @@ def get_media_duration(file_path):
         )
 
         raise RuntimeError(
-            "Could not determine media duration."
+            "ffprobe could not read media duration."
         )
-
-    output = result.stdout.strip()
-
-    if not output:
-        raise RuntimeError("ffprobe returned empty duration.")
-
-    return float(output)
-
-
-# ============================================================
-# GET STREAM DURATION
-# ============================================================
-
-def get_stream_duration(file_path, stream_type):
-
-    command = [
-        "ffprobe",
-        "-v",
-        "error",
-        "-select_streams",
-        stream_type,
-        "-show_entries",
-        "stream=duration",
-        "-of",
-        "default=noprint_wrappers=1:nokey=1",
-        str(file_path)
-    ]
-
-    result = subprocess.run(
-        command,
-        capture_output=True,
-        text=True
-    )
-
-    if result.returncode != 0:
-        return None
 
     value = result.stdout.strip()
 
     if not value:
-        return None
+        raise RuntimeError(
+            "ffprobe returned empty duration."
+        )
 
-    try:
-        return float(value)
-    except ValueError:
-        return None
+    return float(value)
 
 
 # ============================================================
-# CREATE MP4 - EXACT AUDIO LENGTH
+# CHECK FFMPEG
 # ============================================================
 
-def create_mp4(audio_path, output_path):
+def check_ffmpeg():
+
+    for program in ["ffmpeg", "ffprobe"]:
+
+        try:
+
+            result = subprocess.run(
+                [program, "-version"],
+                capture_output=True,
+                text=True
+            )
+
+            if result.returncode != 0:
+
+                raise RuntimeError(
+                    f"{program} is not working."
+                )
+
+            first_line = (
+                result.stdout.splitlines()[0]
+                if result.stdout
+                else program
+            )
+
+            logger.info(
+                "%s available: %s",
+                program,
+                first_line
+            )
+
+        except FileNotFoundError:
+
+            raise RuntimeError(
+                f"{program} was not found. "
+                f"FFmpeg must be installed on Render."
+            )
+
+
+# ============================================================
+# CREATE MP4
+# ============================================================
+
+def create_mp4(
+    audio_path,
+    output_path
+):
 
     """
-    Create black MP4 with duration matching the audio.
+    Create a black MP4 whose duration follows the audio.
 
     Important:
-    - No imageio-ffmpeg
-    - Uses system ffmpeg
-    - Uses system ffprobe
-    - Video is generated from audio duration
-    - Audio/video are cut at the exact target duration
-    - Extra silent video is removed
+    - Audio is the duration master.
+    - -shortest stops the output when audio ends.
+    - -t is also supplied as a safety limit.
+    - No imageio-ffmpeg.
     """
 
-    audio_duration = get_media_duration(audio_path)
+    audio_duration = get_media_duration(
+        audio_path
+    )
 
     logger.info(
-        "Original audio duration: %.3f sec",
+        "Original audio duration: %.3f seconds",
         audio_duration
     )
 
-    # Keep precision but avoid tiny floating point issues.
-    target_duration = max(0.10, audio_duration)
+    # Add only a tiny safety tolerance.
+    # This prevents FFmpeg from cutting the final audio frame.
+    max_duration = audio_duration + 0.05
 
-    duration_text = f"{target_duration:.3f}"
-
-    # --------------------------------------------------------
-    # First pass
-    # --------------------------------------------------------
+    duration_string = f"{max_duration:.3f}"
 
     command = [
+
         "ffmpeg",
+
         "-y",
 
-        # Black video
+        # ----------------------------------------------------
+        # Video input
+        # ----------------------------------------------------
+
         "-f",
         "lavfi",
 
         "-i",
-        "color=c=black:s=1280x720:r=25",
+        "color=c=black:s=1280x720:r=30",
 
-        # Original audio
+        # ----------------------------------------------------
+        # Audio input
+        # ----------------------------------------------------
+
         "-i",
         str(audio_path),
 
-        # Exact target
-        "-t",
-        duration_text,
+        # ----------------------------------------------------
+        # Maps
+        # ----------------------------------------------------
 
-        # Video
         "-map",
         "0:v:0",
 
-        # Audio
         "-map",
         "1:a:0",
+
+        # ----------------------------------------------------
+        # Duration
+        # ----------------------------------------------------
+
+        "-t",
+        duration_string,
+
+        "-shortest",
+
+        "-fflags",
+        "+shortest",
+
+        # ----------------------------------------------------
+        # Video
+        # ----------------------------------------------------
 
         "-c:v",
         "libx264",
@@ -727,7 +784,11 @@ def create_mp4(audio_path, output_path):
         "yuv420p",
 
         "-r",
-        "25",
+        "30",
+
+        # ----------------------------------------------------
+        # Audio
+        # ----------------------------------------------------
 
         "-c:a",
         "aac",
@@ -735,22 +796,25 @@ def create_mp4(audio_path, output_path):
         "-b:a",
         "128k",
 
-        # Make timestamps start at zero
-        "-avoid_negative_ts",
-        "make_zero",
+        "-ar",
+        "44100",
 
-        # Stop when shortest stream finishes
-        "-shortest",
+        # ----------------------------------------------------
+        # MP4
+        # ----------------------------------------------------
 
-        # MP4 streaming
         "-movflags",
         "+faststart",
+
+        # ----------------------------------------------------
+        # Output
+        # ----------------------------------------------------
 
         str(output_path)
     ]
 
     logger.info(
-        "Creating MP4..."
+        "Running FFmpeg for MP4..."
     )
 
     result = subprocess.run(
@@ -762,7 +826,7 @@ def create_mp4(audio_path, output_path):
     if result.returncode != 0:
 
         logger.error(
-            "FFmpeg error:\n%s",
+            "FFmpeg failed:\n%s",
             result.stderr
         )
 
@@ -770,48 +834,61 @@ def create_mp4(audio_path, output_path):
             "FFmpeg could not create MP4."
         )
 
-    # --------------------------------------------------------
-    # Check generated MP4
-    # --------------------------------------------------------
+    if not Path(output_path).exists():
 
-    mp4_duration = get_media_duration(output_path)
+        raise RuntimeError(
+            "FFmpeg finished but MP4 file was not created."
+        )
+
+    mp4_duration = get_media_duration(
+        output_path
+    )
 
     logger.info(
-        "First MP4 duration: %.3f sec",
+        "Generated MP4 duration: %.3f seconds",
         mp4_duration
     )
 
+    difference = abs(
+        mp4_duration - audio_duration
+    )
+
+    logger.info(
+        "Audio/MP4 duration difference: %.3f seconds",
+        difference
+    )
+
     # --------------------------------------------------------
-    # If FFmpeg created extra duration, trim again.
+    # If MP4 is still too long, perform a second trim pass.
     # --------------------------------------------------------
 
-    tolerance = 0.08
-
-    if mp4_duration > target_duration + tolerance:
+    if difference > 0.15:
 
         logger.warning(
-            "MP4 is longer than audio. Trimming again..."
+            "MP4 duration mismatch detected. "
+            "Running correction pass."
         )
 
-        trimmed_path = output_path.with_name(
-            output_path.stem + "_trimmed.mp4"
+        corrected_path = (
+            Path(output_path).with_suffix(".fixed.mp4")
         )
 
-        trim_command = [
+        correction_duration = max(
+            0.05,
+            audio_duration
+        )
+
+        correction_command = [
+
             "ffmpeg",
+
             "-y",
 
             "-i",
             str(output_path),
 
             "-t",
-            duration_text,
-
-            "-map",
-            "0:v:0",
-
-            "-map",
-            "0:a:0",
+            f"{correction_duration:.3f}",
 
             "-c:v",
             "libx264",
@@ -822,109 +899,129 @@ def create_mp4(audio_path, output_path):
             "-pix_fmt",
             "yuv420p",
 
-            "-r",
-            "25",
-
             "-c:a",
             "aac",
 
             "-b:a",
             "128k",
 
-            "-avoid_negative_ts",
-            "make_zero",
-
             "-movflags",
             "+faststart",
 
-            str(trimmed_path)
+            str(corrected_path)
         ]
 
-        trim_result = subprocess.run(
-            trim_command,
+        correction_result = subprocess.run(
+            correction_command,
             capture_output=True,
             text=True
         )
 
-        if trim_result.returncode != 0:
+        if correction_result.returncode != 0:
 
             logger.error(
-                "Second FFmpeg trim failed:\n%s",
-                trim_result.stderr
+                "Correction FFmpeg error:\n%s",
+                correction_result.stderr
             )
 
             raise RuntimeError(
-                "Could not trim MP4."
+                "MP4 duration correction failed."
             )
 
-        try:
-            output_path.unlink()
-        except Exception:
-            pass
+        if corrected_path.exists():
 
-        trimmed_path.replace(output_path)
+            corrected_duration = get_media_duration(
+                corrected_path
+            )
 
-        mp4_duration = get_media_duration(
-            output_path
-        )
+            logger.info(
+                "Corrected MP4 duration: %.3f seconds",
+                corrected_duration
+            )
 
-        logger.info(
-            "Trimmed MP4 duration: %.3f sec",
-            mp4_duration
-        )
+            try:
+                Path(output_path).unlink()
+            except Exception:
+                pass
 
-    # --------------------------------------------------------
-    # Final verification
-    # --------------------------------------------------------
+            corrected_path.rename(
+                output_path
+            )
 
-    video_duration = get_stream_duration(
-        output_path,
-        "v:0"
-    )
+            mp4_duration = corrected_duration
 
-    audio_stream_duration = get_stream_duration(
-        output_path,
-        "a:0"
+    final_difference = abs(
+        mp4_duration - audio_duration
     )
 
     logger.info(
-        "FINAL MP4 format duration: %.3f sec",
+        "FINAL audio duration: %.3f seconds",
+        audio_duration
+    )
+
+    logger.info(
+        "FINAL MP4 duration: %.3f seconds",
         mp4_duration
     )
 
     logger.info(
-        "FINAL video stream duration: %s",
-        video_duration
-    )
-
-    logger.info(
-        "FINAL audio stream duration: %s",
-        audio_stream_duration
-    )
-
-    # We allow a very small codec/container difference.
-    if mp4_duration > target_duration + 0.15:
-
-        raise RuntimeError(
-            f"MP4 duration mismatch: "
-            f"audio={target_duration:.2f}s, "
-            f"mp4={mp4_duration:.2f}s"
-        )
-
-    logger.info(
-        "MP4 duration check OK: audio=%.3f sec, mp4=%.3f sec",
-        target_duration,
-        mp4_duration
+        "FINAL duration difference: %.3f seconds",
+        final_difference
     )
 
     return output_path
 
 
 # ============================================================
+# CLEAN OLD FILES
+# ============================================================
+
+def cleanup_old_files():
+
+    try:
+
+        for file_path in TEMP_DIR.iterdir():
+
+            if not file_path.is_file():
+                continue
+
+            try:
+
+                age = (
+                    __import__("time").time()
+                    - file_path.stat().st_mtime
+                )
+
+                # Delete files older than 30 minutes
+                if age > 1800:
+
+                    file_path.unlink(
+                        missing_ok=True
+                    )
+
+            except Exception:
+
+                logger.exception(
+                    "Could not delete old file: %s",
+                    file_path
+                )
+
+    except Exception:
+
+        logger.exception(
+            "Cleanup failed."
+        )
+
+
+# ============================================================
 # PROCESS TEXT
 # ============================================================
 
-async def process_text(chat_id, user_id, text):
+async def process_text(
+    chat_id,
+    user_id,
+    text
+):
 
     text = text.strip()
 
@@ -951,10 +1048,20 @@ async def process_text(chat_id, user_id, text):
         "⏳ Voice তৈরি হচ্ছে..."
     )
 
-    unique_id = f"{user_id}_{os.getpid()}_{int(asyncio.get_running_loop().time() * 1000)}"
+    unique_id = (
+        f"{user_id}_{os.getpid()}_"
+        f"{int(__import__('time').time() * 1000)}"
+    )
 
-    audio_path = TEMP_DIR / f"voice_{unique_id}.mp3"
-    mp4_path = TEMP_DIR / f"voice_{unique_id}.mp4"
+    audio_path = (
+        TEMP_DIR /
+        f"voice_{unique_id}.mp3"
+    )
+
+    mp4_path = (
+        TEMP_DIR /
+        f"voice_{unique_id}.mp4"
+    )
 
     try:
 
@@ -968,17 +1075,27 @@ async def process_text(chat_id, user_id, text):
             audio_path
         )
 
+        if not audio_path.exists():
+
+            raise RuntimeError(
+                "MP3 file was not created."
+            )
+
+        # ----------------------------------------------------
+        # Get audio duration
+        # ----------------------------------------------------
+
         audio_duration = get_media_duration(
             audio_path
         )
 
         logger.info(
-            "Generated MP3 duration: %.3f sec",
+            "Generated audio duration: %.3f sec",
             audio_duration
         )
 
         # ----------------------------------------------------
-        # Generate MP4
+        # Create MP4
         # ----------------------------------------------------
 
         create_mp4(
@@ -986,33 +1103,61 @@ async def process_text(chat_id, user_id, text):
             mp4_path
         )
 
-        mp4_duration = get_media_duration(
+        # ----------------------------------------------------
+        # Verify final MP4
+        # ----------------------------------------------------
+
+        final_mp4_duration = get_media_duration(
             mp4_path
+        )
+
+        duration_difference = abs(
+            final_mp4_duration - audio_duration
         )
 
         logger.info(
-            "Generated MP4 duration: %.3f sec",
-            mp4_duration
+            "Audio = %.3f sec | MP4 = %.3f sec | Difference = %.3f sec",
+            audio_duration,
+            final_mp4_duration,
+            duration_difference
         )
 
+        # Don't allow a large mismatch.
+        if duration_difference > 0.20:
+
+            raise RuntimeError(
+                "MP4 duration mismatch: "
+                f"audio={audio_duration:.2f}s, "
+                f"mp4={final_mp4_duration:.2f}s"
+            )
+
         # ----------------------------------------------------
-        # Save last generated files
+        # Save files
         # ----------------------------------------------------
 
-        USER_SETTINGS[user_id]["last_mp3"] = str(
+        settings = get_user_settings(
+            user_id
+        )
+
+        settings["last_mp3"] = str(
             audio_path
         )
 
-        USER_SETTINGS[user_id]["last_mp4"] = str(
+        settings["last_mp4"] = str(
             mp4_path
         )
+
+        # ----------------------------------------------------
+        # Send result
+        # ----------------------------------------------------
 
         await send_message(
             chat_id,
             (
                 f"✅ Voice তৈরি হয়েছে!\n\n"
-                f"⏱️ Audio: {audio_duration:.2f} sec\n"
-                f"🎬 MP4: {mp4_duration:.2f} sec\n"
+                f"🎵 MP3: {audio_duration:.2f} sec\n"
+                f"🎬 MP4: {final_mp4_duration:.2f} sec\n"
+                f"📏 Difference: {duration_difference:.2f} sec\n"
                 f"⏸️ Word-by-word pause: OFF\n"
                 f"🐢 Speed: -30%\n\n"
                 f"নিচের option থেকে download করুন:"
@@ -1023,7 +1168,7 @@ async def process_text(chat_id, user_id, text):
     except Exception as e:
 
         logger.exception(
-            "Audio/video generation failed"
+            "Voice generation failed."
         )
 
         await send_message(
@@ -1041,8 +1186,15 @@ async def process_text(chat_id, user_id, text):
 
 async def handle_message(message):
 
-    chat = message.get("chat", {})
-    user = message.get("from", {})
+    chat = message.get(
+        "chat",
+        {}
+    )
+
+    user = message.get(
+        "from",
+        {}
+    )
 
     chat_id = chat.get("id")
     user_id = user.get("id")
@@ -1050,15 +1202,20 @@ async def handle_message(message):
     if not chat_id or not user_id:
         return
 
-    text = message.get("text", "")
+    text = message.get(
+        "text",
+        ""
+    )
 
     # --------------------------------------------------------
-    # /start
+    # START
     # --------------------------------------------------------
 
     if text.startswith("/start"):
 
-        get_user_settings(user_id)
+        get_user_settings(
+            user_id
+        )
 
         await send_message(
             chat_id,
@@ -1069,7 +1226,7 @@ async def handle_message(message):
         return
 
     # --------------------------------------------------------
-    # /help
+    # HELP
     # --------------------------------------------------------
 
     if text.startswith("/help"):
@@ -1082,7 +1239,8 @@ async def handle_message(message):
             "4️⃣ Voice তৈরি হলে MP3 অথবা MP4 download করুন।\n\n"
             "⏸️ Word-by-word pause: OFF\n"
             "🐢 Speed: -30%\n\n"
-            "🎬 MP4-এর duration audio-এর duration-এর সাথে মিলিয়ে তৈরি হবে।"
+            "🎬 MP4-এর duration audio-এর duration-এর সাথে "
+            "মিলিয়ে তৈরি হবে।"
         )
 
         await send_message(
@@ -1094,7 +1252,7 @@ async def handle_message(message):
         return
 
     # --------------------------------------------------------
-    # Normal text
+    # NORMAL TEXT
     # --------------------------------------------------------
 
     if text:
@@ -1114,30 +1272,55 @@ async def handle_message(message):
 
 async def handle_callback(callback):
 
-    callback_id = callback.get("id")
-    data = callback.get("data", "")
+    callback_id = callback.get(
+        "id"
+    )
 
-    message = callback.get("message", {})
+    data = callback.get(
+        "data",
+        ""
+    )
 
-    chat = message.get("chat", {})
-    chat_id = chat.get("id")
+    message = callback.get(
+        "message",
+        {}
+    )
 
-    user = callback.get("from", {})
-    user_id = user.get("id")
+    chat = message.get(
+        "chat",
+        {}
+    )
+
+    chat_id = chat.get(
+        "id"
+    )
+
+    user = callback.get(
+        "from",
+        {}
+    )
+
+    user_id = user.get(
+        "id"
+    )
 
     if not chat_id or not user_id:
         return
 
-    settings = get_user_settings(user_id)
+    settings = get_user_settings(
+        user_id
+    )
 
     # --------------------------------------------------------
     # Answer callback
     # --------------------------------------------------------
 
-    await answer_callback(callback_id)
+    await answer_callback(
+        callback_id
+    )
 
     # --------------------------------------------------------
-    # Start
+    # START
     # --------------------------------------------------------
 
     if data == "start":
@@ -1151,7 +1334,7 @@ async def handle_callback(callback):
         return
 
     # --------------------------------------------------------
-    # Back
+    # BACK
     # --------------------------------------------------------
 
     if data == "back":
@@ -1165,7 +1348,7 @@ async def handle_callback(callback):
         return
 
     # --------------------------------------------------------
-    # Language
+    # LANGUAGE
     # --------------------------------------------------------
 
     if data == "language":
@@ -1179,7 +1362,7 @@ async def handle_callback(callback):
         return
 
     # --------------------------------------------------------
-    # Bangla
+    # BANGLA
     # --------------------------------------------------------
 
     if data == "lang_bn":
@@ -1198,7 +1381,7 @@ async def handle_callback(callback):
         return
 
     # --------------------------------------------------------
-    # English
+    # ENGLISH
     # --------------------------------------------------------
 
     if data == "lang_en":
@@ -1217,7 +1400,7 @@ async def handle_callback(callback):
         return
 
     # --------------------------------------------------------
-    # Voice menu
+    # VOICE MENU
     # --------------------------------------------------------
 
     if data == "voice":
@@ -1241,7 +1424,7 @@ async def handle_callback(callback):
         return
 
     # --------------------------------------------------------
-    # Voice selection
+    # VOICE SELECTION
     # --------------------------------------------------------
 
     if data.startswith("voice_"):
@@ -1254,9 +1437,13 @@ async def handle_callback(callback):
 
         language = settings["language"]
 
-        expected_prefix = language + "_"
+        expected_prefix = (
+            language + "_"
+        )
 
-        if not voice_key.startswith(expected_prefix):
+        if not voice_key.startswith(
+            expected_prefix
+        ):
 
             await send_message(
                 chat_id,
@@ -1299,20 +1486,21 @@ async def handle_callback(callback):
         return
 
     # --------------------------------------------------------
-    # Help
+    # HELP
     # --------------------------------------------------------
 
     if data == "help":
 
         help_text = (
             "ℹ️ VoiceGen BD\n\n"
-            "🎤 Voice নির্বাচন করুন\n"
             "🌐 Language নির্বাচন করুন\n"
+            "🎤 Voice নির্বাচন করুন\n"
             "📝 তারপর Text পাঠান\n\n"
             "⏸️ Word-by-word pause: OFF\n"
             "🐢 Speed: -30%\n\n"
-            "🎵 MP3 এবং 🎬 MP4 দুই option থাকবে।\n"
-            "MP4-এর duration audio-এর কাছাকাছি থাকবে।"
+            "🎵 MP3 এবং 🎬 MP4 দুটোই পাওয়া যাবে।\n"
+            "MP4-এর duration audio-এর duration-এর সাথে "
+            "মিলিয়ে তৈরি হবে।"
         )
 
         await send_message(
@@ -1324,7 +1512,7 @@ async def handle_callback(callback):
         return
 
     # --------------------------------------------------------
-    # MP3 Download
+    # MP3
     # --------------------------------------------------------
 
     if data == "download_mp3":
@@ -1333,7 +1521,10 @@ async def handle_callback(callback):
             "last_mp3"
         )
 
-        if not file_path or not Path(file_path).exists():
+        if (
+            not file_path
+            or not Path(file_path).exists()
+        ):
 
             await send_message(
                 chat_id,
@@ -1358,7 +1549,7 @@ async def handle_callback(callback):
         except Exception as e:
 
             logger.exception(
-                "MP3 send failed"
+                "MP3 send failed."
             )
 
             await send_message(
@@ -1369,7 +1560,7 @@ async def handle_callback(callback):
         return
 
     # --------------------------------------------------------
-    # MP4 Download
+    # MP4
     # --------------------------------------------------------
 
     if data == "download_mp4":
@@ -1378,7 +1569,10 @@ async def handle_callback(callback):
             "last_mp4"
         )
 
-        if not file_path or not Path(file_path).exists():
+        if (
+            not file_path
+            or not Path(file_path).exists()
+        ):
 
             await send_message(
                 chat_id,
@@ -1403,7 +1597,7 @@ async def handle_callback(callback):
         except Exception as e:
 
             logger.exception(
-                "MP4 send failed"
+                "MP4 send failed."
             )
 
             await send_message(
@@ -1415,7 +1609,7 @@ async def handle_callback(callback):
 
 
 # ============================================================
-# TELEGRAM WEBHOOK
+# WEBHOOK
 # ============================================================
 
 async def telegram_webhook(request):
@@ -1425,7 +1619,7 @@ async def telegram_webhook(request):
         update = await request.json()
 
         logger.info(
-            "Telegram update received"
+            "Telegram update received."
         )
 
         if "message" in update:
@@ -1447,7 +1641,7 @@ async def telegram_webhook(request):
     except Exception as e:
 
         logger.exception(
-            "Webhook error"
+            "Webhook error."
         )
 
         return web.json_response(
@@ -1460,7 +1654,7 @@ async def telegram_webhook(request):
 
 
 # ============================================================
-# HEALTH CHECK
+# HEALTH
 # ============================================================
 
 async def health(request):
@@ -1472,8 +1666,7 @@ async def health(request):
             "word_pause": False,
             "speed": "-30%",
             "mp3": True,
-            "mp4": True,
-            "video": "exact_audio_duration"
+            "mp4": True
         }
     )
 
@@ -1504,7 +1697,7 @@ async def set_webhook():
     if result.get("ok"):
 
         logger.info(
-            "Telegram webhook set successfully: %s",
+            "Webhook successfully set: %s",
             WEBHOOK_URL
         )
 
@@ -1517,7 +1710,7 @@ async def set_webhook():
 
 
 # ============================================================
-# GET WEBHOOK INFO
+# WEBHOOK INFO
 # ============================================================
 
 async def get_webhook_info():
@@ -1539,7 +1732,11 @@ async def get_webhook_info():
 async def on_startup(app):
 
     logger.info(
-        "Starting VoiceGen BD..."
+        "=========================================="
+    )
+
+    logger.info(
+        "VoiceGen BD starting..."
     )
 
     logger.info(
@@ -1560,71 +1757,34 @@ async def on_startup(app):
         "Speed: -30%%"
     )
 
+    logger.info(
+        "=========================================="
+    )
+
     # --------------------------------------------------------
     # Check FFmpeg
     # --------------------------------------------------------
 
     try:
 
-        result = subprocess.run(
-            ["ffmpeg", "-version"],
-            capture_output=True,
-            text=True
-        )
+        check_ffmpeg()
 
-        if result.returncode == 0:
-
-            first_line = result.stdout.splitlines()[0]
-
-            logger.info(
-                "FFmpeg available: %s",
-                first_line
-            )
-
-        else:
-
-            logger.error(
-                "FFmpeg is not working."
-            )
-
-    except Exception:
+    except Exception as e:
 
         logger.exception(
             "FFmpeg check failed."
         )
 
-    # --------------------------------------------------------
-    # Check FFprobe
-    # --------------------------------------------------------
-
-    try:
-
-        result = subprocess.run(
-            ["ffprobe", "-version"],
-            capture_output=True,
-            text=True
+        # Do not silently continue.
+        raise RuntimeError(
+            str(e)
         )
 
-        if result.returncode == 0:
+    # --------------------------------------------------------
+    # Cleanup old temporary files
+    # --------------------------------------------------------
 
-            first_line = result.stdout.splitlines()[0]
-
-            logger.info(
-                "FFprobe available: %s",
-                first_line
-            )
-
-        else:
-
-            logger.error(
-                "FFprobe is not working."
-            )
-
-    except Exception:
-
-        logger.exception(
-            "FFprobe check failed."
-        )
+    cleanup_old_files()
 
     # --------------------------------------------------------
     # Telegram webhook
