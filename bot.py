@@ -11,12 +11,7 @@ from dotenv import load_dotenv
 from aiohttp import web
 from pydub import AudioSegment
 
-from telegram import (
-    Update,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-)
-
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -25,7 +20,6 @@ from telegram.ext import (
     ContextTypes,
     filters,
 )
-
 
 # =========================================================
 # CONFIG
@@ -36,9 +30,7 @@ load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 if not BOT_TOKEN:
-    raise ValueError(
-        "BOT_TOKEN পাওয়া যায়নি। Render Environment Variables চেক করুন।"
-    )
+    raise ValueError("BOT_TOKEN পাওয়া যায়নি। Render Environment Variables চেক করুন।")
 
 PORT = int(os.getenv("PORT", "10000"))
 
@@ -48,32 +40,23 @@ WEBHOOK_URL = os.getenv(
 ).rstrip("/")
 
 if not WEBHOOK_URL:
-    raise ValueError(
-        "WEBHOOK_URL অথবা RENDER_EXTERNAL_URL পাওয়া যায়নি।"
-    )
+    raise ValueError("WEBHOOK_URL অথবা RENDER_EXTERNAL_URL পাওয়া যায়নি।")
 
 WEBHOOK_PATH = "/telegram"
-
 FULL_WEBHOOK_URL = WEBHOOK_URL + WEBHOOK_PATH
 
-WEBHOOK_SECRET = os.getenv(
-    "WEBHOOK_SECRET",
-    ""
-).strip()
+WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "").strip()
 
 
 # =========================================================
 # VOICE SETTINGS
 # =========================================================
 
-# Overall voice speed
 VOICE_RATE = "-30%"
 
-# Word-এর মাঝে ছোট natural pause
-WORD_PAUSE_MS = 45
-
-# Sentence শেষ হওয়ার পরে natural pause
-SENTENCE_PAUSE_MS = 160
+# খুব fast / Shorts-style pause
+WORD_PAUSE_MS = 10
+SENTENCE_PAUSE_MS = 50
 
 
 # =========================================================
@@ -96,9 +79,7 @@ user_settings = {}
 
 
 def get_settings(user_id: int):
-
     if user_id not in user_settings:
-
         user_settings[user_id] = {
             "language": "bn",
             "voice": "bn-BD-PradeepNeural",
@@ -108,13 +89,11 @@ def get_settings(user_id: int):
 
 
 def set_language(user_id: int, language: str):
-
     settings = get_settings(user_id)
     settings["language"] = language
 
 
 def set_voice(user_id: int, voice: str):
-
     settings = get_settings(user_id)
     settings["voice"] = voice
 
@@ -124,15 +103,10 @@ def set_voice(user_id: int, voice: str):
 # =========================================================
 
 LANGUAGE_NAMES = {
-
     "bn": "🇧🇩 বাংলা",
-
     "en": "🇬🇧 English",
-
     "hi": "🇮🇳 हिन्दी",
-
     "ur": "🇵🇰 اردو",
-
     "ar": "🇸🇦 العربية",
 }
 
@@ -143,237 +117,78 @@ LANGUAGE_NAMES = {
 
 VOICES = {
 
-    # =====================================================
-    # BANGLA
-    # =====================================================
-
     "bn": {
-
         "male": [
-
-            (
-                "🇧🇩 বাংলা Male 1",
-                "bn-BD-PradeepNeural",
-            ),
-
-            (
-                "🇮🇳 বাংলা Male 2",
-                "bn-IN-BashkarNeural",
-            ),
+            ("🇧🇩 বাংলা Male 1", "bn-BD-PradeepNeural"),
+            ("🇮🇳 বাংলা Male 2", "bn-IN-BashkarNeural"),
         ],
-
         "female": [
-
-            (
-                "🇧🇩 বাংলা Female 1",
-                "bn-BD-NabanitaNeural",
-            ),
-
-            (
-                "🇮🇳 বাংলা Female 2",
-                "bn-IN-TanishaaNeural",
-            ),
+            ("🇧🇩 বাংলা Female 1", "bn-BD-NabanitaNeural"),
+            ("🇮🇳 বাংলা Female 2", "bn-IN-TanishaaNeural"),
         ],
-
         "young": [
-
-            (
-                "🧒 বাংলা Young/Cute 1",
-                "bn-BD-NabanitaNeural",
-            ),
-
-            (
-                "🧒 বাংলা Young/Cute 2",
-                "bn-IN-TanishaaNeural",
-            ),
+            ("🧒 বাংলা Young/Cute 1", "bn-BD-NabanitaNeural"),
+            ("🧒 বাংলা Young/Cute 2", "bn-IN-TanishaaNeural"),
         ],
     },
-
-
-    # =====================================================
-    # ENGLISH
-    # =====================================================
 
     "en": {
-
         "male": [
-
-            (
-                "🇺🇸 English Male 1",
-                "en-US-GuyNeural",
-            ),
-
-            (
-                "🇺🇸 English Male 2",
-                "en-US-AndrewNeural",
-            ),
+            ("🇺🇸 English Male 1", "en-US-GuyNeural"),
+            ("🇺🇸 English Male 2", "en-US-AndrewNeural"),
         ],
-
         "female": [
-
-            (
-                "🇺🇸 English Female 1",
-                "en-US-JennyNeural",
-            ),
-
-            (
-                "🇺🇸 English Female 2",
-                "en-US-AriaNeural",
-            ),
+            ("🇺🇸 English Female 1", "en-US-JennyNeural"),
+            ("🇺🇸 English Female 2", "en-US-AriaNeural"),
         ],
-
         "young": [
-
-            (
-                "🧒 English Young/Cute 1",
-                "en-US-AnaNeural",
-            ),
-
-            (
-                "🧒 English Young/Cute 2",
-                "en-US-JennyNeural",
-            ),
+            ("🧒 English Young/Cute 1", "en-US-AnaNeural"),
+            ("🧒 English Young/Cute 2", "en-US-JennyNeural"),
         ],
     },
-
-
-    # =====================================================
-    # HINDI
-    # =====================================================
 
     "hi": {
-
         "male": [
-
-            (
-                "🇮🇳 Hindi Male 1",
-                "hi-IN-MadhurNeural",
-            ),
-
-            (
-                "🇮🇳 Hindi Male 2",
-                "hi-IN-PrabhatNeural",
-            ),
+            ("🇮🇳 Hindi Male 1", "hi-IN-MadhurNeural"),
+            ("🇮🇳 Hindi Male 2", "hi-IN-PrabhatNeural"),
         ],
-
         "female": [
-
-            (
-                "🇮🇳 Hindi Female 1",
-                "hi-IN-SwaraNeural",
-            ),
-
-            (
-                "🇮🇳 Hindi Female 2",
-                "hi-IN-AnanyaNeural",
-            ),
+            ("🇮🇳 Hindi Female 1", "hi-IN-SwaraNeural"),
+            ("🇮🇳 Hindi Female 2", "hi-IN-AnanyaNeural"),
         ],
-
         "young": [
-
-            (
-                "🧒 Hindi Young/Cute 1",
-                "hi-IN-SwaraNeural",
-            ),
-
-            (
-                "🧒 Hindi Young/Cute 2",
-                "hi-IN-AnanyaNeural",
-            ),
+            ("🧒 Hindi Young/Cute 1", "hi-IN-SwaraNeural"),
+            ("🧒 Hindi Young/Cute 2", "hi-IN-AnanyaNeural"),
         ],
     },
-
-
-    # =====================================================
-    # URDU
-    # =====================================================
 
     "ur": {
-
         "male": [
-
-            (
-                "🇵🇰 Urdu Male 1",
-                "ur-PK-AsadNeural",
-            ),
-
-            (
-                "🇮🇳 Urdu Male 2",
-                "ur-IN-SalmanNeural",
-            ),
+            ("🇵🇰 Urdu Male 1", "ur-PK-AsadNeural"),
+            ("🇮🇳 Urdu Male 2", "ur-IN-SalmanNeural"),
         ],
-
         "female": [
-
-            (
-                "🇵🇰 Urdu Female 1",
-                "ur-PK-UzmaNeural",
-            ),
-
-            (
-                "🇮🇳 Urdu Female 2",
-                "ur-IN-GulNeural",
-            ),
+            ("🇵🇰 Urdu Female 1", "ur-PK-UzmaNeural"),
+            ("🇮🇳 Urdu Female 2", "ur-IN-GulNeural"),
         ],
-
         "young": [
-
-            (
-                "🧒 Urdu Young/Cute 1",
-                "ur-PK-UzmaNeural",
-            ),
-
-            (
-                "🧒 Urdu Young/Cute 2",
-                "ur-IN-GulNeural",
-            ),
+            ("🧒 Urdu Young/Cute 1", "ur-PK-UzmaNeural"),
+            ("🧒 Urdu Young/Cute 2", "ur-IN-GulNeural"),
         ],
     },
 
-
-    # =====================================================
-    # ARABIC
-    # =====================================================
-
     "ar": {
-
         "male": [
-
-            (
-                "🇸🇦 Arabic Male 1",
-                "ar-SA-HamedNeural",
-            ),
-
-            (
-                "🇦🇪 Arabic Male 2",
-                "ar-AE-HamdanNeural",
-            ),
+            ("🇸🇦 Arabic Male 1", "ar-SA-HamedNeural"),
+            ("🇦🇪 Arabic Male 2", "ar-AE-HamdanNeural"),
         ],
-
         "female": [
-
-            (
-                "🇸🇦 Arabic Female 1",
-                "ar-SA-ZariyahNeural",
-            ),
-
-            (
-                "🇪🇬 Arabic Female 2",
-                "ar-EG-SalmaNeural",
-            ),
+            ("🇸🇦 Arabic Female 1", "ar-SA-ZariyahNeural"),
+            ("🇪🇬 Arabic Female 2", "ar-EG-SalmaNeural"),
         ],
-
         "young": [
-
-            (
-                "🧒 Arabic Young/Cute 1",
-                "ar-EG-SalmaNeural",
-            ),
-
-            (
-                "🧒 Arabic Young/Cute 2",
-                "ar-SA-ZariyahNeural",
-            ),
+            ("🧒 Arabic Young/Cute 1", "ar-EG-SalmaNeural"),
+            ("🧒 Arabic Young/Cute 2", "ar-SA-ZariyahNeural"),
         ],
     },
 }
@@ -383,26 +198,16 @@ VOICES = {
 # VOICE VALIDATION
 # =========================================================
 
-def is_valid_voice(
-    language: str,
-    voice: str,
-) -> bool:
+def is_valid_voice(language: str, voice: str) -> bool:
 
     language_voices = VOICES.get(language)
 
     if not language_voices:
         return False
 
-    for category in (
-        "male",
-        "female",
-        "young",
-    ):
+    for category in ("male", "female", "young"):
 
-        for _, voice_id in language_voices.get(
-            category,
-            [],
-        ):
+        for _, voice_id in language_voices.get(category, []):
 
             if voice_id == voice:
                 return True
@@ -417,26 +222,22 @@ def is_valid_voice(
 def main_menu_keyboard():
 
     keyboard = [
-
         [
             InlineKeyboardButton(
                 "🌐 Language",
                 callback_data="menu_language",
             ),
-
             InlineKeyboardButton(
                 "🎤 Voice",
                 callback_data="menu_voice",
             ),
         ],
-
         [
             InlineKeyboardButton(
                 "ℹ️ Help",
                 callback_data="menu_help",
             ),
         ],
-
         [
             InlineKeyboardButton(
                 "🔄 Start",
@@ -455,38 +256,32 @@ def main_menu_keyboard():
 def language_keyboard():
 
     keyboard = [
-
         [
             InlineKeyboardButton(
                 "🇧🇩 বাংলা",
                 callback_data="lang_bn",
             ),
-
             InlineKeyboardButton(
                 "🇬🇧 English",
                 callback_data="lang_en",
             ),
         ],
-
         [
             InlineKeyboardButton(
                 "🇮🇳 हिन्दी",
                 callback_data="lang_hi",
             ),
-
             InlineKeyboardButton(
                 "🇵🇰 اردو",
                 callback_data="lang_ur",
             ),
         ],
-
         [
             InlineKeyboardButton(
                 "🇸🇦 العربية",
                 callback_data="lang_ar",
             ),
         ],
-
         [
             InlineKeyboardButton(
                 "🔙 Back",
@@ -504,10 +299,7 @@ def language_keyboard():
 
 def voice_keyboard(language: str):
 
-    voices = VOICES.get(
-        language,
-        VOICES["bn"],
-    )
+    voices = VOICES.get(language, VOICES["bn"])
 
     keyboard = []
 
@@ -606,7 +398,6 @@ async def create_word_pause_audio(
     words = split_text_into_words(text)
 
     if not words:
-
         raise RuntimeError(
             "Text-এ কোনো word পাওয়া যায়নি।"
         )
@@ -647,13 +438,11 @@ async def create_word_pause_audio(
             word_file_path = Path(word_path)
 
             if not word_file_path.exists():
-
                 raise RuntimeError(
                     f"Word audio তৈরি হয়নি: {word}"
                 )
 
             if word_file_path.stat().st_size <= 0:
-
                 raise RuntimeError(
                     f"Word audio empty হয়েছে: {word}"
                 )
@@ -867,6 +656,7 @@ async def help_command(
         "🎵 Output: MP3",
 
         parse_mode="HTML",
+
         reply_markup=main_menu_keyboard(),
     )
 
@@ -966,13 +756,11 @@ async def text_to_voice(
         output_path = Path(output_file)
 
         if not output_path.exists():
-
             raise RuntimeError(
                 "Final MP3 file তৈরি হয়নি।"
             )
 
         if output_path.stat().st_size <= 0:
-
             raise RuntimeError(
                 "Final MP3 file empty হয়েছে।"
             )
@@ -1014,7 +802,9 @@ async def text_to_voice(
 
     except Exception as e:
 
-        logger.exception("TTS Error")
+        logger.exception(
+            "TTS Error"
+        )
 
         try:
 
@@ -1056,7 +846,6 @@ async def text_to_voice(
                 path = Path(output_file)
 
                 if path.exists():
-
                     path.unlink()
 
             except Exception:
@@ -1086,10 +875,6 @@ async def callback_handler(
 
     data = query.data or ""
 
-    # =====================================================
-    # MAIN MENU
-    # =====================================================
-
     if data == "menu_start":
 
         await start(
@@ -1098,10 +883,6 @@ async def callback_handler(
         )
 
         return
-
-    # =====================================================
-    # LANGUAGE MENU
-    # =====================================================
 
     if data == "menu_language":
 
@@ -1115,10 +896,6 @@ async def callback_handler(
         )
 
         return
-
-    # =====================================================
-    # VOICE MENU
-    # =====================================================
 
     if data == "menu_voice":
 
@@ -1139,10 +916,6 @@ async def callback_handler(
         )
 
         return
-
-    # =====================================================
-    # HELP
-    # =====================================================
 
     if data == "menu_help":
 
@@ -1173,10 +946,6 @@ async def callback_handler(
 
         return
 
-    # =====================================================
-    # LANGUAGE SELECTION
-    # =====================================================
-
     if data.startswith("lang_"):
 
         language = data.replace(
@@ -1186,12 +955,10 @@ async def callback_handler(
         )
 
         if language not in VOICES:
-
             logger.warning(
                 "Invalid language: %s",
                 language,
             )
-
             return
 
         set_language(
@@ -1231,10 +998,6 @@ async def callback_handler(
         )
 
         return
-
-    # =====================================================
-    # VOICE SELECT
-    # =====================================================
 
     if data.startswith("voice_select|"):
 
@@ -1285,10 +1048,6 @@ async def callback_handler(
         )
 
         return
-
-    # =====================================================
-    # CATEGORY BUTTONS
-    # =====================================================
 
     if data == "voice_title_male":
 
@@ -1357,6 +1116,7 @@ async def post_init(
             "help",
             "ℹ️ Help",
         ),
+
     ])
 
     logger.info(
@@ -1697,6 +1457,7 @@ async def run_bot():
         "drop_pending_updates": False,
 
         "max_connections": 40,
+
     }
 
     if WEBHOOK_SECRET:
@@ -1785,11 +1546,15 @@ async def run_bot():
     )
 
     print(
-        f"Pause  : {WORD_PAUSE_MS}ms"
+        f"Word Pause: {WORD_PAUSE_MS}ms"
     )
 
     print(
-        f"Sentence Pause : {SENTENCE_PAUSE_MS}ms"
+        f"Sentence Pause: {SENTENCE_PAUSE_MS}ms"
+    )
+
+    print(
+        f"Voice Speed: {VOICE_RATE}"
     )
 
     print(
