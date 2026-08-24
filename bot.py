@@ -56,7 +56,7 @@ VOICE_RATE = "-30%"
 
 # খুব fast / Shorts-style pause
 WORD_PAUSE_MS = 0
-SENTENCE_PAUSE_MS = 10
+SENTENCE_PAUSE_MS = 0
 
 
 # =========================================================
