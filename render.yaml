@@ -2,9 +2,7 @@ services:
   - type: web
     name: voicegen-bd
     runtime: python
-
     buildCommand: pip install -r requirements.txt
-    preDeployCommand: apt-get update && apt-get install -y ffmpeg
     startCommand: python bot.py
 
     envVars:
