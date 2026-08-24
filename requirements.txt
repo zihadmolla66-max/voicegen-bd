@@ -2,6 +2,4 @@ python-telegram-bot[webhooks]==22.5
 edge-tts
 python-dotenv
 aiohttp
-pydub
-imageio
 imageio-ffmpeg
