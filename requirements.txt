@@ -3,4 +3,3 @@ edge-tts
 python-dotenv
 aiohttp
 pydub
-audioop-lts
