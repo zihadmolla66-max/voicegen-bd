@@ -45,15 +45,14 @@ if not BOT_TOKEN:
 DEFAULT_LANGUAGE = "bn"
 DEFAULT_VOICE_TYPE = "male"
 
-# Word-by-word pause is permanently OFF.
+# Word-by-word pause permanently OFF
 WORD_PAUSE = False
 
-# Default speed
 DEFAULT_SPEED = -30
 
 
 # ============================================================
-# LANGUAGE / VOICE SETTINGS
+# LANGUAGES
 # ============================================================
 
 LANGUAGES = {
@@ -62,8 +61,13 @@ LANGUAGES = {
 }
 
 
+# ============================================================
+# VOICES
+# ============================================================
+
 VOICES = {
     "bn": {
+
         "male": {
             "name": "👨 Male",
             "voice": "bn-BD-PradeepNeural",
@@ -94,6 +98,7 @@ VOICES = {
     },
 
     "en": {
+
         "male": {
             "name": "👨 Male",
             "voice": "en-US-GuyNeural",
@@ -153,7 +158,10 @@ def clamp_speed(speed: int) -> int:
     return max(-50, min(50, speed))
 
 
-def make_rate(speed: int, extra_rate: int = 0) -> str:
+def make_rate(
+    speed: int,
+    extra_rate: int = 0
+) -> str:
 
     final_rate = clamp_speed(
         speed + extra_rate
@@ -167,15 +175,18 @@ def get_voice_data(settings):
     language = settings["language"]
     voice_type = settings["voice_type"]
 
-    return VOICES[language][voice_type]
+    return VOICES[
+        language
+    ][
+        voice_type
+    ]
 
 
 def settings_text(settings):
 
-    language_name = LANGUAGES.get(
-        settings["language"],
+    language_name = LANGUAGES[
         settings["language"]
-    )
+    ]
 
     voice_name = VOICES[
         settings["language"]
@@ -183,13 +194,11 @@ def settings_text(settings):
         settings["voice_type"]
     ]["name"]
 
-    speed = settings["speed"]
-
     return (
-        "✅ Voice selected successfully!\n\n"
-        "প্রথমে আপনার Text পাঠান।\n\n"
+        "✅ Settings saved!\n\n"
+        "আপনার Text পাঠান।\n\n"
         "⏸ Word-by-word pause: OFF\n"
-        f"🐢 Speed: {speed:+d}%\n"
+        f"🐢 Speed: {settings['speed']:+d}%\n"
         f"🌐 Language: {language_name}\n"
         f"🎙 Voice: {voice_name}"
     )
@@ -245,7 +254,9 @@ async def start(
 
     user_id = update.effective_user.id
 
-    settings = get_user_settings(user_id)
+    settings = get_user_settings(
+        user_id
+    )
 
     text = (
         "🎙 *VoiceGen BD*\n\n"
@@ -311,7 +322,9 @@ async def language_menu(
 
     await query.edit_message_text(
         "🌐 Select Language:",
-        reply_markup=InlineKeyboardMarkup(keyboard)
+        reply_markup=InlineKeyboardMarkup(
+            keyboard
+        )
     )
 
 
@@ -364,7 +377,9 @@ async def voice_menu(
 
     await query.edit_message_text(
         "🎙 Select Voice:",
-        reply_markup=InlineKeyboardMarkup(keyboard)
+        reply_markup=InlineKeyboardMarkup(
+            keyboard
+        )
     )
 
 
@@ -444,7 +459,9 @@ async def speed_menu(
 
     await query.edit_message_text(
         "⚡ Select speaking speed:",
-        reply_markup=InlineKeyboardMarkup(keyboard)
+        reply_markup=InlineKeyboardMarkup(
+            keyboard
+        )
     )
 
 
@@ -472,8 +489,8 @@ async def help_menu(
 
         "4️⃣ তারপর আপনার Text পাঠান।\n\n"
 
-        "🎵 Bot MP3 তৈরি করবে।\n"
-        "🎬 Bot MP4-ও তৈরি করবে।\n\n"
+        "🎵 MP3 তৈরি হবে।\n"
+        "🎬 MP4 তৈরি হবে।\n\n"
 
         "⏸ Word-by-word pause সম্পূর্ণ OFF।\n"
         "Text একসাথে TTS engine-এ পাঠানো হয়।"
@@ -494,7 +511,7 @@ async def help_menu(
 
 
 # ============================================================
-# TTS GENERATION
+# GENERATE MP3
 # ============================================================
 
 async def generate_mp3(
@@ -504,11 +521,10 @@ async def generate_mp3(
     rate: str,
     pitch: str,
 ):
-    """
-    Generate ONE continuous MP3.
 
-    No word-by-word splitting.
-    Therefore word-by-word pause is OFF.
+    """
+    পুরো text একসাথে TTS করা হচ্ছে।
+    Word-by-word split করা হচ্ছে না।
     """
 
     communicate = edge_tts.Communicate(
@@ -519,23 +535,37 @@ async def generate_mp3(
         pitch=pitch,
     )
 
-    await communicate.save(output_file)
+    await communicate.save(
+        output_file
+    )
 
 
 # ============================================================
-# GET AUDIO DURATION
+# GET MEDIA DURATION
 # ============================================================
 
-def get_audio_duration(audio_file: str) -> float:
+def get_media_duration(
+    media_file: str
+) -> float:
+
+    """
+    FFmpeg দিয়ে media duration বের করা।
+    """
 
     ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
 
     command = [
+
         ffmpeg,
+
+        "-hide_banner",
+
         "-i",
-        audio_file,
+        media_file,
+
         "-f",
         "null",
+
         "-"
     ]
 
@@ -552,14 +582,23 @@ def get_audio_duration(audio_file: str) -> float:
     )
 
     if not match:
+
         raise RuntimeError(
-            "Audio duration detect করা যায়নি.\n"
-            + result.stderr[-2000:]
+            "Media duration detect করা যায়নি.\n\n"
+            + result.stderr[-3000:]
         )
 
-    hours = int(match.group(1))
-    minutes = int(match.group(2))
-    seconds = float(match.group(3))
+    hours = int(
+        match.group(1)
+    )
+
+    minutes = int(
+        match.group(2)
+    )
+
+    seconds = float(
+        match.group(3)
+    )
 
     duration = (
         hours * 3600
@@ -568,48 +607,75 @@ def get_audio_duration(audio_file: str) -> float:
     )
 
     if duration <= 0:
+
         raise RuntimeError(
-            "Invalid audio duration."
+            "Invalid media duration."
         )
 
     return duration
 
 
 # ============================================================
-# MP4 GENERATION
+# CREATE MP4
 # ============================================================
 
 def generate_mp4(
     mp3_file: str,
     mp4_file: str
 ):
+
     """
-    Create MP4 with EXACTLY the same duration as MP3.
+    MP3-এর exact duration অনুযায়ী MP4 তৈরি করে।
 
     Example:
         MP3 = 5 seconds
         MP4 = 5 seconds
 
-    No extra silent video time.
+    কোনো extra 56-second silent video নয়।
     """
 
     ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
 
     # --------------------------------------------------------
-    # Get exact MP3 duration
+    # Get actual MP3 duration
     # --------------------------------------------------------
 
-    duration = get_audio_duration(
+    duration = get_media_duration(
         mp3_file
     )
 
     print(
-        f"Detected MP3 duration: "
-        f"{duration:.3f} seconds"
+        f"[MP4] MP3 duration = "
+        f"{duration:.3f} sec"
     )
 
     # --------------------------------------------------------
-    # Create video with exact audio duration
+    # Use 25 FPS
+    # --------------------------------------------------------
+
+    fps = 25
+
+    # Exact number of frames
+    frame_count = max(
+        1,
+        round(
+            duration * fps
+        )
+    )
+
+    print(
+        f"[MP4] FPS = {fps}"
+    )
+
+    print(
+        f"[MP4] Frames = {frame_count}"
+    )
+
+    # --------------------------------------------------------
+    # IMPORTANT:
+    #
+    # Instead of infinite color video + shortest,
+    # generate EXACT number of frames.
     # --------------------------------------------------------
 
     command = [
@@ -618,15 +684,24 @@ def generate_mp4(
 
         "-y",
 
+        "-hide_banner",
+
+        "-loglevel",
+        "error",
+
         # ----------------------------------------------------
-        # Black background
+        # Generate exact number of black frames
         # ----------------------------------------------------
 
         "-f",
         "lavfi",
 
         "-i",
-        "color=c=black:s=720x720:r=1",
+        (
+            f"color=c=black:"
+            f"s=720x720:"
+            f"r={fps}"
+        ),
 
         # ----------------------------------------------------
         # Audio
@@ -636,7 +711,7 @@ def generate_mp4(
         mp3_file,
 
         # ----------------------------------------------------
-        # Explicit stream mapping
+        # Map streams
         # ----------------------------------------------------
 
         "-map",
@@ -646,14 +721,21 @@ def generate_mp4(
         "1:a:0",
 
         # ----------------------------------------------------
-        # EXACT duration
+        # EXACT VIDEO FRAME COUNT
+        # ----------------------------------------------------
+
+        "-frames:v",
+        str(frame_count),
+
+        # ----------------------------------------------------
+        # Audio duration
         # ----------------------------------------------------
 
         "-t",
         f"{duration:.3f}",
 
         # ----------------------------------------------------
-        # Video
+        # Video codec
         # ----------------------------------------------------
 
         "-c:v",
@@ -662,14 +744,11 @@ def generate_mp4(
         "-preset",
         "veryfast",
 
-        "-tune",
-        "stillimage",
-
         "-pix_fmt",
         "yuv420p",
 
         # ----------------------------------------------------
-        # Audio
+        # Audio codec
         # ----------------------------------------------------
 
         "-c:a",
@@ -679,7 +758,7 @@ def generate_mp4(
         "128k",
 
         # ----------------------------------------------------
-        # Fast MP4 start
+        # MP4 compatibility
         # ----------------------------------------------------
 
         "-movflags",
@@ -698,30 +777,141 @@ def generate_mp4(
     if result.returncode != 0:
 
         raise RuntimeError(
-            "FFmpeg MP4 conversion failed:\n"
-            + result.stderr[-3000:]
+            "FFmpeg MP4 conversion failed:\n\n"
+            + result.stderr[-4000:]
         )
 
-    if not os.path.exists(mp4_file):
+    # --------------------------------------------------------
+    # Check file
+    # --------------------------------------------------------
+
+    if not os.path.exists(
+        mp4_file
+    ):
 
         raise RuntimeError(
             "MP4 file তৈরি হয়নি."
         )
 
-    if os.path.getsize(mp4_file) <= 0:
+    if os.path.getsize(
+        mp4_file
+    ) <= 0:
 
         raise RuntimeError(
-            "MP4 file empty হয়েছে."
+            "MP4 file empty."
+        )
+
+    # --------------------------------------------------------
+    # Verify final MP4
+    # --------------------------------------------------------
+
+    final_duration = get_media_duration(
+        mp4_file
+    )
+
+    print(
+        f"[MP4] Final MP4 duration = "
+        f"{final_duration:.3f} sec"
+    )
+
+    # --------------------------------------------------------
+    # Safety check
+    # --------------------------------------------------------
+
+    if final_duration > duration + 1.0:
+
+        print(
+            "[MP4] Duration is too long. "
+            "Rebuilding with hard trim."
+        )
+
+        trim_command = [
+
+            ffmpeg,
+
+            "-y",
+
+            "-hide_banner",
+
+            "-loglevel",
+            "error",
+
+            # Video
+            "-f",
+            "lavfi",
+
+            "-i",
+            (
+                "color=c=black:"
+                "s=720x720:"
+                "r=25"
+            ),
+
+            # Audio
+            "-i",
+            mp3_file,
+
+            "-map",
+            "0:v:0",
+
+            "-map",
+            "1:a:0",
+
+            # HARD LIMIT
+            "-t",
+            f"{duration:.3f}",
+
+            "-c:v",
+            "libx264",
+
+            "-preset",
+            "ultrafast",
+
+            "-pix_fmt",
+            "yuv420p",
+
+            "-c:a",
+            "aac",
+
+            "-b:a",
+            "128k",
+
+            "-movflags",
+            "+faststart",
+
+            mp4_file,
+        ]
+
+        result2 = subprocess.run(
+            trim_command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
+
+        if result2.returncode != 0:
+
+            raise RuntimeError(
+                "Final MP4 trim failed:\n\n"
+                + result2.stderr[-4000:]
+            )
+
+        final_duration = get_media_duration(
+            mp4_file
+        )
+
+        print(
+            f"[MP4] After trim = "
+            f"{final_duration:.3f} sec"
         )
 
     print(
-        f"MP4 created successfully: "
-        f"{duration:.3f} seconds"
+        "[MP4] Created successfully."
     )
 
 
 # ============================================================
-# TEXT MESSAGE HANDLER
+# TEXT HANDLER
 # ============================================================
 
 async def text_handler(
@@ -752,11 +942,17 @@ async def text_handler(
         settings
     )
 
-    voice = voice_data["voice"]
+    voice = voice_data[
+        "voice"
+    ]
 
-    pitch = voice_data["pitch"]
+    pitch = voice_data[
+        "pitch"
+    ]
 
-    speed = settings["speed"]
+    speed = settings[
+        "speed"
+    ]
 
     extra_rate = voice_data[
         "rate_adjust"
@@ -789,7 +985,7 @@ async def text_handler(
     try:
 
         # ====================================================
-        # Generate MP3
+        # MP3
         # ====================================================
 
         await generate_mp3(
@@ -801,7 +997,7 @@ async def text_handler(
         )
 
         # ====================================================
-        # Generate MP4
+        # MP4
         # ====================================================
 
         await status.edit_text(
@@ -812,11 +1008,11 @@ async def text_handler(
         await asyncio.to_thread(
             generate_mp4,
             mp3_file,
-            mp4_file,
+            mp4_file
         )
 
         # ====================================================
-        # Send MP3
+        # SEND MP3
         # ====================================================
 
         await status.edit_text(
@@ -848,11 +1044,11 @@ async def text_handler(
                 audio=audio,
                 title="VoiceGen BD",
                 performer="VoiceGen BD",
-                caption=caption,
+                caption=caption
             )
 
         # ====================================================
-        # Send MP4
+        # SEND MP4
         # ====================================================
 
         await status.edit_text(
@@ -873,29 +1069,42 @@ async def text_handler(
                     "⏸ Word pause: OFF\n"
                     f"🐢 Speed: {settings['speed']:+d}%"
                 ),
-                supports_streaming=True,
+                supports_streaming=True
             )
 
         # ====================================================
-        # Delete status
+        # DELETE STATUS
         # ====================================================
 
         await status.delete()
 
         # ====================================================
-        # Show controls again
+        # SETTINGS AGAIN
         # ====================================================
 
         await update.message.reply_text(
             settings_text(settings),
-            reply_markup=main_keyboard(settings)
+            reply_markup=main_keyboard(
+                settings
+            )
         )
 
     except Exception as e:
 
         print(
-            "TTS/MP4 ERROR:",
+            "================================"
+        )
+
+        print(
+            "TTS / MP4 ERROR:"
+        )
+
+        print(
             repr(e)
+        )
+
+        print(
+            "================================"
         )
 
         try:
@@ -903,7 +1112,7 @@ async def text_handler(
             await status.edit_text(
                 "❌ Voice তৈরি করা যায়নি।\n\n"
                 "কিছুক্ষণ পরে আবার চেষ্টা করুন।\n\n"
-                f"Error: {str(e)[:500]}"
+                f"Error: {str(e)[:700]}"
             )
 
         except Exception:
@@ -912,7 +1121,7 @@ async def text_handler(
     finally:
 
         # ====================================================
-        # Cleanup
+        # CLEAN TEMP FILES
         # ====================================================
 
         try:
@@ -975,7 +1184,7 @@ async def callback_handler(
         return
 
     # ========================================================
-    # LANGUAGE MENU
+    # LANGUAGE
     # ========================================================
 
     if data == "language":
@@ -993,15 +1202,23 @@ async def callback_handler(
 
     if data == "lang_bn":
 
-        settings["language"] = "bn"
+        settings[
+            "language"
+        ] = "bn"
 
-        if settings["voice_type"] not in VOICES["bn"]:
+        if settings[
+            "voice_type"
+        ] not in VOICES["bn"]:
 
-            settings["voice_type"] = "male"
+            settings[
+                "voice_type"
+            ] = "male"
 
         await query.edit_message_text(
             settings_text(settings),
-            reply_markup=main_keyboard(settings)
+            reply_markup=main_keyboard(
+                settings
+            )
         )
 
         return
@@ -1012,21 +1229,29 @@ async def callback_handler(
 
     if data == "lang_en":
 
-        settings["language"] = "en"
+        settings[
+            "language"
+        ] = "en"
 
-        if settings["voice_type"] not in VOICES["en"]:
+        if settings[
+            "voice_type"
+        ] not in VOICES["en"]:
 
-            settings["voice_type"] = "male"
+            settings[
+                "voice_type"
+            ] = "male"
 
         await query.edit_message_text(
             settings_text(settings),
-            reply_markup=main_keyboard(settings)
+            reply_markup=main_keyboard(
+                settings
+            )
         )
 
         return
 
     # ========================================================
-    # VOICE MENU
+    # VOICE
     # ========================================================
 
     if data == "voice":
@@ -1042,7 +1267,9 @@ async def callback_handler(
     # VOICE SELECT
     # ========================================================
 
-    if data.startswith("voice_"):
+    if data.startswith(
+        "voice_"
+    ):
 
         voice_type = data.replace(
             "voice_",
@@ -1054,17 +1281,21 @@ async def callback_handler(
             settings["language"]
         ]:
 
-            settings["voice_type"] = voice_type
+            settings[
+                "voice_type"
+            ] = voice_type
 
         await query.edit_message_text(
             settings_text(settings),
-            reply_markup=main_keyboard(settings)
+            reply_markup=main_keyboard(
+                settings
+            )
         )
 
         return
 
     # ========================================================
-    # SPEED MENU
+    # SPEED
     # ========================================================
 
     if data == "speed":
@@ -1080,7 +1311,9 @@ async def callback_handler(
     # SPEED SELECT
     # ========================================================
 
-    if data.startswith("speed_"):
+    if data.startswith(
+        "speed_"
+    ):
 
         try:
 
@@ -1092,7 +1325,9 @@ async def callback_handler(
                 )
             )
 
-            settings["speed"] = clamp_speed(
+            settings[
+                "speed"
+            ] = clamp_speed(
                 speed
             )
 
@@ -1101,7 +1336,9 @@ async def callback_handler(
 
         await query.edit_message_text(
             settings_text(settings),
-            reply_markup=main_keyboard(settings)
+            reply_markup=main_keyboard(
+                settings
+            )
         )
 
         return
@@ -1127,7 +1364,9 @@ async def callback_handler(
 
         await query.edit_message_text(
             settings_text(settings),
-            reply_markup=main_keyboard(settings)
+            reply_markup=main_keyboard(
+                settings
+            )
         )
 
         return
@@ -1149,7 +1388,7 @@ async def error_handler(
 
 
 # ============================================================
-# APPLICATION
+# CREATE APPLICATION
 # ============================================================
 
 def create_application():
@@ -1160,10 +1399,6 @@ def create_application():
         .build()
     )
 
-    # --------------------------------------------------------
-    # /start
-    # --------------------------------------------------------
-
     application.add_handler(
         CommandHandler(
             "start",
@@ -1171,19 +1406,11 @@ def create_application():
         )
     )
 
-    # --------------------------------------------------------
-    # Buttons
-    # --------------------------------------------------------
-
     application.add_handler(
         CallbackQueryHandler(
             callback_handler
         )
     )
-
-    # --------------------------------------------------------
-    # Text
-    # --------------------------------------------------------
 
     application.add_handler(
         MessageHandler(
@@ -1191,10 +1418,6 @@ def create_application():
             text_handler
         )
     )
-
-    # --------------------------------------------------------
-    # Error
-    # --------------------------------------------------------
 
     application.add_error_handler(
         error_handler
@@ -1212,12 +1435,14 @@ def main():
     application = create_application()
 
     # ========================================================
-    # WEBHOOK MODE
+    # WEBHOOK
     # ========================================================
 
     if WEBHOOK_URL:
 
-        webhook_url = WEBHOOK_URL.rstrip("/")
+        webhook_url = (
+            WEBHOOK_URL.rstrip("/")
+        )
 
         if not webhook_url.endswith(
             "/telegram"
@@ -1256,7 +1481,7 @@ def main():
         )
 
     # ========================================================
-    # FALLBACK POLLING
+    # POLLING FALLBACK
     # ========================================================
 
     else:
@@ -1277,4 +1502,5 @@ def main():
 # ============================================================
 
 if __name__ == "__main__":
+
     main()
